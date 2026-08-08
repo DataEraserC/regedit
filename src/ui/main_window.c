@@ -206,8 +206,7 @@ on_location_activate(GtkWidget *widget, gpointer user_data)
 static GtkWidget *
 build_location_bar(LrMainWindow *mw)
 {
-    GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    GtkWidget *label = gtk_label_new("位置：");
+    GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 
     gtk_widget_set_margin_start(bar, 8);
     gtk_widget_set_margin_end(bar, 8);
@@ -217,8 +216,6 @@ build_location_bar(LrMainWindow *mw)
     mw->location_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(mw->location_entry),
                                    "输入路径后回车跳转");
-
-    gtk_box_pack_start(GTK_BOX(bar), label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(bar), mw->location_entry, TRUE, TRUE, 0);
 
     g_signal_connect(mw->location_entry, "activate",
