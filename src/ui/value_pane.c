@@ -235,8 +235,12 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
 
     gtk_text_buffer_set_text(buf, "正在查询 man ...", -1);
 
+    /* --no-hyphenation 禁用断词（避免 LOCAL1 → LO‐+换行+CAL1 的 "‐ 换行"）；
+     * --no-justification 禁用两端对齐（避免多余空格）。 */
     quoted = g_shell_quote(self->current_basename);
-    cmd = g_strdup_printf("man 5 %s 2>/dev/null | col -b", quoted);
+    cmd = g_strdup_printf("man --no-hyphenation --no-justification 5 %s "
+                          "2>/dev/null | col -b",
+                          quoted);
     g_free(quoted);
 
     proc = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE, &error,
