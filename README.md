@@ -155,7 +155,8 @@ linux-regedit/
 │   ├── ui/
 │   │   ├── main_window.c/h  # 主窗口：五个菜单 + 地址栏 + 左右分栏
 │   │   ├── tree_pane.c/h    # 左侧文件树（计算机 + 三个根键，懒加载/右键/虚线）
-│   │   └── value_pane.c/h   # 右侧配置项表格 + 文本兜底 + man 说明面板
+│   │   ├── value_pane.c/h   # 右侧配置项表格 + 文本兜底 + man 说明面板（含结果缓存）
+│   │   └── window_state.c/h # 窗口几何与上次路径的会话状态保存/恢复
 │   ├── core/
 │   │   ├── scanner.c/h      # 目录扫描（含超大/非文本/空目录过滤）
 │   │   ├── format.c/h       # 格式注册表式识别与分发（driver 模式，内容嗅探）

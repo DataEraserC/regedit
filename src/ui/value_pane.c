@@ -43,20 +43,30 @@ struct _LrValuePane
     GtkTreeStore *json_store;
     char *current_basename; /* 当前配置文件 basename（用于 man 5 查询） */
     char *current_name;     /* 当前选中配置项名（用于过滤段落） */
+    GHashTable *man_cache;  /* "basename\x01name" → 过滤后的说明文本 */
 };
+
+/* 一次 man 查询请求（key 为 "basename\x01name"），作为异步回调上下文 */
+typedef struct
+{
+    LrValuePane *self;
+    gchar *key;
+} ManRequest;
 
 static void
 on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
 {
-    LrValuePane *self = user_data;
+    ManRequest *req = user_data;
+    LrValuePane *self = req->self;
     GSubprocess *proc = G_SUBPROCESS(source);
     GBytes *out = NULL, *err_out = NULL;
     GError *error = NULL;
     GtkTextBuffer *buf = gtk_text_view_get_buffer(self->info_text);
+    gchar *final_text = NULL;
 
     if (!g_subprocess_communicate_finish(proc, res, &out, &err_out, &error))
     {
-        gtk_text_buffer_set_text(buf, "man 查询失败。", -1);
+        final_text = g_strdup("man 查询失败。");
         g_clear_error(&error);
     }
     else if (out != NULL)
@@ -90,30 +100,42 @@ on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
             if (result->len > 0)
             {
                 g_strstrip(result->str);
-                gtk_text_buffer_set_text(buf, result->str, -1);
+                final_text = g_strdup(result->str);
             }
             else
             {
-                gchar *msg = g_strdup_printf("未找到「%s」的说明。",
+                final_text = g_strdup_printf("未找到「%s」的说明。",
                                              self->current_name);
-                gtk_text_buffer_set_text(buf, msg, -1);
-                g_free(msg);
             }
             g_string_free(result, TRUE);
         }
         else if (len > 0)
         {
-            gtk_text_buffer_set_text(buf, data, (gint)MIN(len, G_MAXINT));
+            final_text = g_strndup(data, (gsize)MIN(len, G_MAXINT));
         }
         else
         {
-            gtk_text_buffer_set_text(buf, "未找到该名称的 man 手册页。", -1);
+            final_text = g_strdup("未找到该名称的 man 手册页。");
         }
     }
     else
     {
-        gtk_text_buffer_set_text(buf, "未找到该名称的 man 手册页。", -1);
+        final_text = g_strdup("未找到该名称的 man 手册页。");
     }
+
+    gtk_text_buffer_set_text(buf, final_text, -1);
+
+    /* 缓存成功结果，避免来回切换反复启动 man 子进程 */
+    if (req->key != NULL && final_text != NULL)
+    {
+        if (g_hash_table_size(self->man_cache) > 64)
+            g_hash_table_remove_all(self->man_cache);
+        g_hash_table_replace(self->man_cache, req->key, g_strdup(final_text));
+        req->key = NULL; /* 所有权已转移给缓存表 */
+    }
+    g_free(req->key);
+    g_free(req);
+    g_free(final_text);
 
     g_clear_pointer(&out, g_bytes_unref);
     g_clear_pointer(&err_out, g_bytes_unref);
@@ -123,9 +145,11 @@ on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
 static void
 lr_value_pane_show_man(LrValuePane *self, const char *name)
 {
-    gchar *quoted, *cmd;
+    gchar *quoted, *cmd, *key;
+    const gchar *cached;
     GError *error = NULL;
     GSubprocess *proc;
+    ManRequest *req;
     gchar *title = g_strdup_printf("说明：%s（man 5 %s）", name,
                                    self->current_basename != NULL
                                        ? self->current_basename
@@ -137,15 +161,26 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
     gtk_label_set_text(self->info_title, title);
     g_free(title);
 
-    gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
-                             "正在查询 man ...", -1);
-
     if (self->current_basename == NULL)
     {
         gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
                                  "无法确定配置文件名。", -1);
         return;
     }
+
+    /* 缓存命中：直接显示，不再启动 man 子进程 */
+    key = g_strdup_printf("%s\x01%s", self->current_basename, name);
+    cached = g_hash_table_lookup(self->man_cache, key);
+    if (cached != NULL)
+    {
+        gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
+                                 cached, -1);
+        g_free(key);
+        return;
+    }
+
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
+                             "正在查询 man ...", -1);
 
     quoted = g_shell_quote(self->current_basename);
     cmd = g_strdup_printf("man 5 %s 2>/dev/null | col -b", quoted);
@@ -160,10 +195,15 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
         gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
                                  "无法启动 man 查询。", -1);
         g_clear_error(&error);
+        g_free(key);
         return;
     }
 
-    g_subprocess_communicate_async(proc, NULL, NULL, on_man_done, self);
+    /* 每个请求携带独立 key，避免异步回调间的竞态 */
+    req = g_new0(ManRequest, 1);
+    req->self = self;
+    req->key = key;
+    g_subprocess_communicate_async(proc, NULL, NULL, on_man_done, req);
 }
 
 /* 窗口尺寸变化时保持说明面板为固定高度（而非随比例伸缩） */
@@ -555,6 +595,9 @@ lr_value_pane_new(void)
     GtkWidget *scrolled;
     GtkWidget *label;
 
+    self->man_cache = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                            g_free, g_free);
+
     self->widget = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
 
     self->stack = gtk_stack_new();
@@ -682,5 +725,6 @@ void lr_value_pane_free(LrValuePane *self)
         return;
     g_free(self->current_basename);
     g_free(self->current_name);
+    g_hash_table_destroy(self->man_cache);
     g_free(self);
 }
