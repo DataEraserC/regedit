@@ -1,0 +1,19 @@
+# Meson / Ninja 构建产物
+builddir/
+build/
+meson-private/
+
+# C 编译产物
+*.o
+*.a
+*.so
+*.so.*
+*.dll
+
+# 编辑器/系统
+*.swp
+*~
+.DS_Store
+
+# 日志与临时文件
+*.log
