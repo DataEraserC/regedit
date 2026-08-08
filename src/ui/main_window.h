@@ -9,7 +9,7 @@
 typedef struct _LrMainWindow LrMainWindow;
 
 LrMainWindow *lr_main_window_new(void);
-GtkWidget    *lr_main_window_get_window(LrMainWindow *self);
-void          lr_main_window_free(LrMainWindow *self);
+GtkWidget *lr_main_window_get_window(LrMainWindow *self);
+void lr_main_window_free(LrMainWindow *self);
 
 #endif /* LR_UI_MAIN_WINDOW_H */

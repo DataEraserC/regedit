@@ -33,7 +33,8 @@ is_number_literal(const char *s)
         return FALSE;
 
     /* 十六进制 */
-    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+    {
         if (s[2] == '\0')
             return FALSE;
         errno = 0;
@@ -72,11 +73,15 @@ lr_value_detect_type(const char *value)
 const char *
 lr_value_type_name(LrValueType type)
 {
-    switch (type) {
-    case LR_VALUE_NUMBER: return "数字";
-    case LR_VALUE_BOOL:   return "布尔值";
+    switch (type)
+    {
+    case LR_VALUE_NUMBER:
+        return "数字";
+    case LR_VALUE_BOOL:
+        return "布尔值";
     case LR_VALUE_STRING:
-    default:              return "字符串";
+    default:
+        return "字符串";
     }
 }
 
@@ -94,8 +99,7 @@ lr_config_item_new(const char *key, const char *data,
     return item;
 }
 
-void
-lr_config_item_free(LrConfigItem *item)
+void lr_config_item_free(LrConfigItem *item)
 {
     if (item == NULL)
         return;
@@ -116,8 +120,7 @@ lr_config_file_new(const char *path)
     return file;
 }
 
-void
-lr_config_file_free(LrConfigFile *file)
+void lr_config_file_free(LrConfigFile *file)
 {
     if (file == NULL)
         return;

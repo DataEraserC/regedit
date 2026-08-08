@@ -13,26 +13,29 @@
 
 #include <glib.h>
 
-typedef enum {
-    LR_VALUE_NUMBER = 0,  /* 数字，类比 REG_DWORD / REG_QWORD */
-    LR_VALUE_STRING,      /* 字符串，类比 REG_SZ */
-    LR_VALUE_BOOL,        /* 布尔，类比 REG_DWORD (0/1) */
+typedef enum
+{
+    LR_VALUE_NUMBER = 0, /* 数字，类比 REG_DWORD / REG_QWORD */
+    LR_VALUE_STRING,     /* 字符串，类比 REG_SZ */
+    LR_VALUE_BOOL,       /* 布尔，类比 REG_DWORD (0/1) */
 } LrValueType;
 
-typedef struct {
-    char      *key;       /* 配置项名称 */
-    LrValueType type;     /* 识别出的类型 */
-    char      *data;      /* 原始值文本（去引号、去注释后的值） */
-    char      *section;   /* 所属节，无节为 NULL */
-    char      *comment;   /* 备注（注释内容），可为 NULL */
+typedef struct
+{
+    char *key;        /* 配置项名称 */
+    LrValueType type; /* 识别出的类型 */
+    char *data;       /* 原始值文本（去引号、去注释后的值） */
+    char *section;    /* 所属节，无节为 NULL */
+    char *comment;    /* 备注（注释内容），可为 NULL */
 } LrConfigItem;
 
 /* 一个已解析的配置文件（类比一个注册表键下的值集合） */
-typedef struct {
-    char      *path;      /* 文件路径 */
-    gboolean   parsed;    /* 是否解析成功 */
-    char      *error;     /* 解析错误信息，可为 NULL */
-    GPtrArray *items;     /* LrConfigItem* 数组 */
+typedef struct
+{
+    char *path;       /* 文件路径 */
+    gboolean parsed;  /* 是否解析成功 */
+    char *error;      /* 解析错误信息，可为 NULL */
+    GPtrArray *items; /* LrConfigItem* 数组 */
 } LrConfigFile;
 
 /* 类型识别：根据值文本启发式判断其类型 */

@@ -2,8 +2,7 @@
 
 #include <string.h>
 
-void
-lr_scan_entry_free(LrScanEntry *entry)
+void lr_scan_entry_free(LrScanEntry *entry)
 {
     if (entry == NULL)
         return;
@@ -37,7 +36,8 @@ lr_scanner_list_dir(const char *path)
     if (dir == NULL)
         return arr;
 
-    while ((name = g_dir_read_name(dir)) != NULL) {
+    while ((name = g_dir_read_name(dir)) != NULL)
+    {
         LrScanEntry *entry;
         char *full = g_build_filename(path, name, NULL);
 
@@ -48,14 +48,20 @@ lr_scanner_list_dir(const char *path)
         entry->name = g_strdup(name);
         entry->path = full;
 
-        if (g_file_test(full, G_FILE_TEST_IS_DIR)) {
+        if (g_file_test(full, G_FILE_TEST_IS_DIR))
+        {
             entry->kind = LR_SCAN_DIR;
-        } else {
+        }
+        else
+        {
             LrConfigFormat fmt = lr_format_detect(full);
-            if (lr_format_supported(fmt)) {
+            if (lr_format_supported(fmt))
+            {
                 entry->kind = LR_SCAN_SUPPORTED_FILE;
                 entry->format = fmt;
-            } else {
+            }
+            else
+            {
                 entry->kind = LR_SCAN_OTHER_FILE;
             }
         }

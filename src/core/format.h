@@ -5,11 +5,12 @@
 #include <glib.h>
 #include "core/value.h"
 
-typedef enum {
-    LR_FORMAT_UNKNOWN = 0,  /* 不支持：以文本编辑器兜底展示 */
-    LR_FORMAT_INI,          /* INI：分节键值对 */
-    LR_FORMAT_KV,           /* 扁平 key=value */
-    LR_FORMAT_SYSTEMD,      /* systemd unit 文件 */
+typedef enum
+{
+    LR_FORMAT_UNKNOWN = 0, /* 不支持：以文本编辑器兜底展示 */
+    LR_FORMAT_INI,         /* INI：分节键值对 */
+    LR_FORMAT_KV,          /* 扁平 key=value */
+    LR_FORMAT_SYSTEMD,     /* systemd unit 文件 */
 } LrConfigFormat;
 
 /* 根据文件名与文件内容启发式判断格式 */

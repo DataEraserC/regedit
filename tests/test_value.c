@@ -1,8 +1,7 @@
 #include "test_runner.h"
 #include "core/value.h"
 
-void
-test_value_types(void)
+void test_value_types(void)
 {
     /* 数字 */
     TEST_ASSERT(lr_value_detect_type("123") == LR_VALUE_NUMBER);

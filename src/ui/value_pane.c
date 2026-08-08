@@ -1,7 +1,8 @@
 #include "ui/value_pane.h"
 #include "core/format.h"
 
-enum {
+enum
+{
     COL_NAME = 0,
     COL_TYPE,
     COL_DATA,
@@ -9,15 +10,16 @@ enum {
     N_COLS
 };
 
-struct _LrValuePane {
-    GtkWidget    *widget;    /* 根容器：GtkBox（信息栏 + 页面栈） */
-    GtkWidget    *stack;     /* GtkStack：empty / table / text */
-    GtkWidget    *table_page;
-    GtkWidget    *text_page;
-    GtkTreeView  *view;
+struct _LrValuePane
+{
+    GtkWidget *widget; /* 根容器：GtkBox（信息栏 + 页面栈） */
+    GtkWidget *stack;  /* GtkStack：empty / table / text */
+    GtkWidget *table_page;
+    GtkWidget *text_page;
+    GtkTreeView *view;
     GtkListStore *store;
-    GtkTextView  *text;
-    GtkLabel     *info_label;
+    GtkTextView *text;
+    GtkLabel *info_label;
 };
 
 static void
@@ -32,14 +34,17 @@ show_text(LrValuePane *self, const char *path, const char *info,
 
     gtk_text_buffer_set_text(buf, "", -1);
 
-    if (!g_file_get_contents(path, &content, &length, &error)) {
+    if (!g_file_get_contents(path, &content, &length, &error))
+    {
         gchar *msg = g_strdup_printf("无法读取文件：%s",
                                      error != NULL ? error->message
                                                    : "未知错误");
         gtk_text_buffer_set_text(buf, msg, -1);
         g_free(msg);
         g_clear_error(&error);
-    } else {
+    }
+    else
+    {
         gtk_text_buffer_set_text(buf, content, (gint)MIN(length, G_MAXINT));
         g_free(content);
     }
@@ -54,14 +59,14 @@ show_text(LrValuePane *self, const char *path, const char *info,
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "text");
 }
 
-void
-lr_value_pane_load_file(LrValuePane *self, const char *path)
+void lr_value_pane_load_file(LrValuePane *self, const char *path)
 {
     LrConfigFormat fmt = lr_format_detect(path);
     gchar *info = g_strdup_printf("路径：%s　格式：%s",
                                   path, lr_format_name(fmt));
 
-    if (!lr_format_supported(fmt)) {
+    if (!lr_format_supported(fmt))
+    {
         show_text(self, path, info, "（暂不支持该格式，以文本方式查看）");
         g_free(info);
         return;
@@ -72,7 +77,8 @@ lr_value_pane_load_file(LrValuePane *self, const char *path)
         gchar *count_info;
         guint i;
 
-        if (!file->parsed) {
+        if (!file->parsed)
+        {
             show_text(self, path, info, "（解析失败，以文本方式查看）");
             lr_config_file_free(file);
             g_free(info);
@@ -80,7 +86,8 @@ lr_value_pane_load_file(LrValuePane *self, const char *path)
         }
 
         gtk_list_store_clear(self->store);
-        for (i = 0; i < file->items->len; i++) {
+        for (i = 0; i < file->items->len; i++)
+        {
             LrConfigItem *item = g_ptr_array_index(file->items, i);
             GtkTreeIter iter;
 
@@ -89,8 +96,7 @@ lr_value_pane_load_file(LrValuePane *self, const char *path)
                                COL_NAME, item->key,
                                COL_TYPE, lr_value_type_name(item->type),
                                COL_DATA, item->data,
-                               COL_COMMENT, item->comment != NULL
-                                                ? item->comment : "",
+                               COL_COMMENT, item->comment != NULL ? item->comment : "",
                                -1);
         }
 
@@ -104,8 +110,7 @@ lr_value_pane_load_file(LrValuePane *self, const char *path)
     }
 }
 
-void
-lr_value_pane_clear(LrValuePane *self)
+void lr_value_pane_clear(LrValuePane *self)
 {
     gtk_list_store_clear(self->store);
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "empty");
@@ -218,8 +223,7 @@ lr_value_pane_get_widget(LrValuePane *self)
     return self->widget;
 }
 
-void
-lr_value_pane_free(LrValuePane *self)
+void lr_value_pane_free(LrValuePane *self)
 {
     if (self == NULL)
         return;

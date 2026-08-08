@@ -1,8 +1,7 @@
 #include "app.h"
 #include "ui/main_window.h"
 
-void
-lr_app_activate(GtkApplication *app, gpointer user_data)
+void lr_app_activate(GtkApplication *app, gpointer user_data)
 {
     LrMainWindow *mw;
     GtkWidget *window;

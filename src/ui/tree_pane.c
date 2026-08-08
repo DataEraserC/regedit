@@ -1,7 +1,8 @@
 #include "ui/tree_pane.h"
 #include "core/scanner.h"
 
-enum {
+enum
+{
     COL_ICON = 0,
     COL_NAME,
     COL_PATH,
@@ -11,16 +12,17 @@ enum {
     N_COLS
 };
 
-struct _LrTreePane {
-    GtkWidget         *widget;
-    GtkTreeView       *view;
-    GtkTreeStore      *store;
+struct _LrTreePane
+{
+    GtkWidget *widget;
+    GtkTreeView *view;
+    GtkTreeStore *store;
     LrTreePaneSelectCb select_cb;
-    gpointer           select_data;
+    gpointer select_data;
 
-    GdkPixbuf         *icon_folder;
-    GdkPixbuf         *icon_config;
-    GdkPixbuf         *icon_other;
+    GdkPixbuf *icon_folder;
+    GdkPixbuf *icon_config;
+    GdkPixbuf *icon_other;
 };
 
 static GdkPixbuf *
@@ -29,7 +31,8 @@ load_icon(const gchar *name, gint size)
     GtkIconTheme *theme = gtk_icon_theme_get_default();
     GError *error = NULL;
     GdkPixbuf *pb = gtk_icon_theme_load_icon(theme, name, size, 0, &error);
-    if (pb == NULL) {
+    if (pb == NULL)
+    {
         g_clear_error(&error);
         return NULL;
     }
@@ -70,10 +73,14 @@ add_root(LrTreePane *self, const char *label, const char *path)
 static GdkPixbuf *
 icon_for_kind(LrTreePane *self, LrScanKind kind)
 {
-    switch (kind) {
-    case LR_SCAN_DIR:            return self->icon_folder;
-    case LR_SCAN_SUPPORTED_FILE: return self->icon_config;
-    default:                     return self->icon_other;
+    switch (kind)
+    {
+    case LR_SCAN_DIR:
+        return self->icon_folder;
+    case LR_SCAN_SUPPORTED_FILE:
+        return self->icon_config;
+    default:
+        return self->icon_other;
     }
 }
 
@@ -83,7 +90,8 @@ fill_children(LrTreePane *self, GtkTreeIter *parent, const char *dirpath)
     GPtrArray *entries = lr_scanner_list_dir(dirpath);
     guint i;
 
-    for (i = 0; i < entries->len; i++) {
+    for (i = 0; i < entries->len; i++)
+    {
         LrScanEntry *e = g_ptr_array_index(entries, i);
         GtkTreeIter child;
 
@@ -119,14 +127,16 @@ on_row_expanded(GtkTreeView *view, GtkTreeIter *iter, GtkTreePath *tpath,
     gtk_tree_model_get(GTK_TREE_MODEL(self->store), iter,
                        COL_LOADED, &loaded,
                        COL_PATH, &dirpath, -1);
-    if (loaded || dirpath == NULL || *dirpath == '\0') {
+    if (loaded || dirpath == NULL || *dirpath == '\0')
+    {
         g_free(dirpath);
         return;
     }
 
     /* 移除占位的 dummy 子节点（若有） */
     if (gtk_tree_model_iter_children(GTK_TREE_MODEL(self->store), &child,
-                                     iter)) {
+                                     iter))
+    {
         gchar *cpath = NULL;
         gtk_tree_model_get(GTK_TREE_MODEL(self->store), &child,
                            COL_PATH, &cpath, -1);
@@ -216,16 +226,14 @@ lr_tree_pane_get_widget(LrTreePane *self)
     return self->widget;
 }
 
-void
-lr_tree_pane_set_select_cb(LrTreePane *self, LrTreePaneSelectCb cb,
-                           gpointer user_data)
+void lr_tree_pane_set_select_cb(LrTreePane *self, LrTreePaneSelectCb cb,
+                                gpointer user_data)
 {
     self->select_cb = cb;
     self->select_data = user_data;
 }
 
-void
-lr_tree_pane_refresh(LrTreePane *self)
+void lr_tree_pane_refresh(LrTreePane *self)
 {
     const gchar *home = g_get_home_dir();
     gchar *config = g_build_filename(home, ".config", NULL);
@@ -236,8 +244,7 @@ lr_tree_pane_refresh(LrTreePane *self)
     g_free(config);
 }
 
-void
-lr_tree_pane_free(LrTreePane *self)
+void lr_tree_pane_free(LrTreePane *self)
 {
     if (self == NULL)
         return;

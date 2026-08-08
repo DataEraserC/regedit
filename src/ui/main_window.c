@@ -2,12 +2,13 @@
 
 #include <gtk/gtk.h>
 
-struct _LrMainWindow {
-    GtkWidget    *window;
-    LrTreePane   *tree;
-    LrValuePane  *value;
-    GtkWidget    *statusbar;
-    guint         status_ctx;
+struct _LrMainWindow
+{
+    GtkWidget *window;
+    LrTreePane *tree;
+    LrValuePane *value;
+    GtkWidget *statusbar;
+    guint status_ctx;
 };
 
 static void
@@ -17,11 +18,14 @@ on_tree_select(const char *path, gboolean is_dir, gpointer user_data)
 
     gtk_statusbar_remove_all(GTK_STATUSBAR(mw->statusbar), mw->status_ctx);
 
-    if (is_dir) {
+    if (is_dir)
+    {
         lr_value_pane_clear(mw->value);
         gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
                            path);
-    } else {
+    }
+    else
+    {
         lr_value_pane_load_file(mw->value, path);
         gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
                            path);
@@ -165,8 +169,7 @@ lr_main_window_get_window(LrMainWindow *self)
     return self->window;
 }
 
-void
-lr_main_window_free(LrMainWindow *self)
+void lr_main_window_free(LrMainWindow *self)
 {
     if (self == NULL)
         return;

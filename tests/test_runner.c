@@ -3,8 +3,7 @@
 gint g_test_count = 0;
 gint g_test_failures = 0;
 
-int
-main(void)
+int main(void)
 {
     test_value_types();
     test_parsers();

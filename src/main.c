@@ -6,8 +6,7 @@
 #include <gtk/gtk.h>
 #include "app.h"
 
-int
-main(int argc, char **argv)
+int main(int argc, char **argv)
 {
     GtkApplication *app;
     gint status;

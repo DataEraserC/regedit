@@ -12,21 +12,25 @@ lr_strip_inline_comment(const char *value, char **comment_out)
 
     *comment_out = NULL;
 
-    if (value == NULL) {
+    if (value == NULL)
+    {
         return g_strdup("");
     }
 
     /* 整体被双引号包裹 */
-    if (value[0] == '"') {
+    if (value[0] == '"')
+    {
         const char *close = strchr(value + 1, '"');
-        if (close != NULL) {
+        if (close != NULL)
+        {
             /* 引号内的值 */
             result = g_strndup(value + 1, (gsize)(close - value - 1));
             /* 闭合引号之后的行内注释 */
             p = close + 1;
             while (*p == ' ' || *p == '\t')
                 p++;
-            if (*p == '#' || *p == ';') {
+            if (*p == '#' || *p == ';')
+            {
                 comment = g_strstrip(g_strdup(p + 1));
             }
             *comment_out = comment;
@@ -38,10 +42,12 @@ lr_strip_inline_comment(const char *value, char **comment_out)
     /* 普通文本：扫描未加引号的 ; 或 # 作为注释起点 */
     p = value;
     quoted = FALSE;
-    while (*p != '\0') {
+    while (*p != '\0')
+    {
         if (*p == '"')
             quoted = !quoted;
-        if (!quoted && (*p == ';' || *p == '#')) {
+        if (!quoted && (*p == ';' || *p == '#'))
+        {
             comment = g_strstrip(g_strdup(p + 1));
             break;
         }
@@ -70,7 +76,8 @@ lr_split_key_value(const char *line, const char *delims,
         return FALSE;
 
     p = line;
-    while (*p != '\0') {
+    while (*p != '\0')
+    {
         if (*p == '"')
             in_quotes = !in_quotes;
         if (!in_quotes && strchr(delims, *p) != NULL)
@@ -84,7 +91,8 @@ lr_split_key_value(const char *line, const char *delims,
     *key_out = g_strstrip(g_strndup(line, (gsize)(p - line)));
     *value_out = g_strstrip(g_strdup(p + 1));
 
-    if (**key_out == '\0') {
+    if (**key_out == '\0')
+    {
         g_free(*key_out);
         g_free(*value_out);
         *key_out = NULL;
@@ -106,9 +114,12 @@ append_pending_comment(char **pending, const char *line)
         p++;
     stripped = g_strstrip(g_strdup(p));
 
-    if (*pending == NULL) {
+    if (*pending == NULL)
+    {
         *pending = g_strdup(stripped);
-    } else {
+    }
+    else
+    {
         char *old = *pending;
         *pending = g_strconcat(old, "\n", stripped, NULL);
         g_free(old);
@@ -127,7 +138,8 @@ lr_parse_section_kv(const char *path, LrConfigFile *file)
     char *section = NULL;
     char *pending_comment = NULL;
 
-    if (!g_file_get_contents(path, &content, &length, &error)) {
+    if (!g_file_get_contents(path, &content, &length, &error))
+    {
         file->parsed = FALSE;
         file->error = g_strdup(error->message);
         g_clear_error(&error);
@@ -137,22 +149,26 @@ lr_parse_section_kv(const char *path, LrConfigFile *file)
     lines = g_strsplit(content, "\n", -1);
     g_free(content);
 
-    for (linep = lines; linep != NULL && *linep != NULL; linep++) {
+    for (linep = lines; linep != NULL && *linep != NULL; linep++)
+    {
         char *line = g_strstrip(*linep);
 
         if (*line == '\0')
             continue;
 
         /* 注释行 */
-        if (line[0] == '#' || line[0] == ';') {
+        if (line[0] == '#' || line[0] == ';')
+        {
             append_pending_comment(&pending_comment, line);
             continue;
         }
 
         /* 节 */
-        if (line[0] == '[') {
+        if (line[0] == '[')
+        {
             char *close = strchr(line, ']');
-            if (close != NULL) {
+            if (close != NULL)
+            {
                 g_free(section);
                 section = g_strndup(line + 1, (gsize)(close - line - 1));
             }
@@ -171,7 +187,8 @@ lr_parse_section_kv(const char *path, LrConfigFile *file)
             LrConfigItem *item = lr_config_item_new(
                 key, value, lr_value_detect_type(value), section,
                 pending_comment != NULL ? pending_comment : inline_comment);
-            if (pending_comment != NULL && inline_comment != NULL) {
+            if (pending_comment != NULL && inline_comment != NULL)
+            {
                 char *merged = g_strconcat(pending_comment, "\n",
                                            inline_comment, NULL);
                 g_free(item->comment);

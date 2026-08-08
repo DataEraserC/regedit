@@ -11,7 +11,8 @@ lr_parse_kv(const char *path, LrConfigFile *file)
     gchar **linep;
     char *pending_comment = NULL;
 
-    if (!g_file_get_contents(path, &content, &length, &error)) {
+    if (!g_file_get_contents(path, &content, &length, &error))
+    {
         file->parsed = FALSE;
         file->error = g_strdup(error->message);
         g_clear_error(&error);
@@ -21,22 +22,27 @@ lr_parse_kv(const char *path, LrConfigFile *file)
     lines = g_strsplit(content, "\n", -1);
     g_free(content);
 
-    for (linep = lines; linep != NULL && *linep != NULL; linep++) {
+    for (linep = lines; linep != NULL && *linep != NULL; linep++)
+    {
         char *line = g_strstrip(*linep);
 
         if (*line == '\0')
             continue;
 
-        if (line[0] == '#' || line[0] == ';') {
+        if (line[0] == '#' || line[0] == ';')
+        {
             const char *p = line;
             char *stripped;
 
             while (*p == '#' || *p == ';')
                 p++;
             stripped = g_strstrip(g_strdup(p));
-            if (pending_comment == NULL) {
+            if (pending_comment == NULL)
+            {
                 pending_comment = g_strdup(stripped);
-            } else {
+            }
+            else
+            {
                 char *old = pending_comment;
                 pending_comment = g_strconcat(old, "\n", stripped, NULL);
                 g_free(old);
@@ -57,7 +63,8 @@ lr_parse_kv(const char *path, LrConfigFile *file)
             LrConfigItem *item = lr_config_item_new(
                 key, value, lr_value_detect_type(value), NULL,
                 pending_comment != NULL ? pending_comment : inline_comment);
-            if (pending_comment != NULL && inline_comment != NULL) {
+            if (pending_comment != NULL && inline_comment != NULL)
+            {
                 char *merged = g_strconcat(pending_comment, "\n",
                                            inline_comment, NULL);
                 g_free(item->comment);

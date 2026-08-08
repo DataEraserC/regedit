@@ -11,18 +11,17 @@ write_tmp(const gchar *name, const gchar *content)
     return path;
 }
 
-void
-test_parsers(void)
+void test_parsers(void)
 {
     /* ---------- INI ---------- */
     {
         gchar *p = write_tmp("lr-test-1.ini",
-            "# 顶部注释\n"
-            "[server]\n"
-            "Port = 22  # 端口\n"
-            "Enable = yes\n"
-            "; 第二注释\n"
-            "Name = \"my host\"\n");
+                             "# 顶部注释\n"
+                             "[server]\n"
+                             "Port = 22  # 端口\n"
+                             "Enable = yes\n"
+                             "; 第二注释\n"
+                             "Name = \"my host\"\n");
         LrConfigFile *f = lr_parse_config(p);
 
         TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_INI);
@@ -57,10 +56,10 @@ test_parsers(void)
     /* ---------- 扁平 KeyValue ---------- */
     {
         gchar *p = write_tmp("lr-test-2.conf",
-            "# 环境变量\n"
-            "PATH=/usr/local/bin:/usr/bin\n"
-            "LANG=en_US.UTF-8\n"
-            "DEBUG=false\n");
+                             "# 环境变量\n"
+                             "PATH=/usr/local/bin:/usr/bin\n"
+                             "LANG=en_US.UTF-8\n"
+                             "DEBUG=false\n");
         LrConfigFile *f = lr_parse_config(p);
 
         TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_KV);
@@ -84,15 +83,15 @@ test_parsers(void)
     /* ---------- systemd unit ---------- */
     {
         gchar *p = write_tmp("lr-test-3.service",
-            "[Unit]\n"
-            "Description=My demo service\n"
-            "After=network.target\n"
-            "\n"
-            "[Service]\n"
-            "Type=simple\n"
-            "Restart=on-failure\n"
-            "# 运行用户\n"
-            "User=www-data\n");
+                             "[Unit]\n"
+                             "Description=My demo service\n"
+                             "After=network.target\n"
+                             "\n"
+                             "[Service]\n"
+                             "Type=simple\n"
+                             "Restart=on-failure\n"
+                             "# 运行用户\n"
+                             "User=www-data\n");
         LrConfigFile *f = lr_parse_config(p);
 
         TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_SYSTEMD);

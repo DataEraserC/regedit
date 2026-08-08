@@ -11,10 +11,10 @@ has_systemd_extension(const char *path)
     static const char *exts[] = {
         ".service", ".socket", ".timer", ".mount", ".automount",
         ".swap", ".path", ".slice", ".scope", ".target", ".device",
-        NULL
-    };
+        NULL};
     gint i;
-    for (i = 0; exts[i] != NULL; i++) {
+    for (i = 0; exts[i] != NULL; i++)
+    {
         if (g_str_has_suffix(path, exts[i]))
             return TRUE;
     }
@@ -29,11 +29,13 @@ read_head(const char *path, gsize max)
     gsize length = 0;
     GError *error = NULL;
 
-    if (!g_file_get_contents(path, &content, &length, &error)) {
+    if (!g_file_get_contents(path, &content, &length, &error))
+    {
         g_clear_error(&error);
         return NULL;
     }
-    if (length > max) {
+    if (length > max)
+    {
         char *head = g_strndup(content, max);
         g_free(content);
         return head;
@@ -61,13 +63,15 @@ lr_format_detect(const char *path)
     lines = g_strsplit(head, "\n", -1);
     g_free(head);
 
-    for (linep = lines; linep != NULL && *linep != NULL; linep++) {
+    for (linep = lines; linep != NULL && *linep != NULL; linep++)
+    {
         char *line = g_strstrip(*linep);
 
         if (*line == '\0' || line[0] == '#' || line[0] == ';')
             continue;
 
-        if (line[0] == '[' && strchr(line, ']') != NULL) {
+        if (line[0] == '[' && strchr(line, ']') != NULL)
+        {
             has_section = TRUE;
             continue;
         }
@@ -87,12 +91,17 @@ lr_format_detect(const char *path)
 const char *
 lr_format_name(LrConfigFormat fmt)
 {
-    switch (fmt) {
-    case LR_FORMAT_INI:     return "INI";
-    case LR_FORMAT_KV:      return "键值对";
-    case LR_FORMAT_SYSTEMD: return "systemd unit";
+    switch (fmt)
+    {
+    case LR_FORMAT_INI:
+        return "INI";
+    case LR_FORMAT_KV:
+        return "键值对";
+    case LR_FORMAT_SYSTEMD:
+        return "systemd unit";
     case LR_FORMAT_UNKNOWN:
-    default:                return "未知格式";
+    default:
+        return "未知格式";
     }
 }
 
@@ -110,7 +119,8 @@ lr_parse_config(const char *path)
     LrConfigFormat fmt = lr_format_detect(path);
     gboolean ok = FALSE;
 
-    switch (fmt) {
+    switch (fmt)
+    {
     case LR_FORMAT_INI:
         ok = lr_parse_ini(path, file);
         break;
