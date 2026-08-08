@@ -281,6 +281,92 @@ void lr_tree_pane_collapse_all(LrTreePane *self)
     gtk_tree_view_collapse_all(self->view);
 }
 
+/* 若节点为未加载的目录，移除占位子节点并填充真实子节点 */
+static void
+ensure_children_loaded(LrTreePane *self, GtkTreeIter *iter)
+{
+    GtkTreeModel *model = GTK_TREE_MODEL(self->store);
+    gboolean loaded = FALSE;
+    gchar *dirpath = NULL;
+    GtkTreeIter child;
+
+    gtk_tree_model_get(model, iter, COL_LOADED, &loaded,
+                       COL_PATH, &dirpath, -1);
+    if (loaded || dirpath == NULL || *dirpath == '\0')
+    {
+        g_free(dirpath);
+        return;
+    }
+
+    if (gtk_tree_model_iter_children(model, &child, iter))
+    {
+        gchar *cpath = NULL;
+        gtk_tree_model_get(model, &child, COL_PATH, &cpath, -1);
+        if (cpath == NULL || *cpath == '\0')
+            gtk_tree_store_remove(self->store, &child);
+        g_free(cpath);
+    }
+
+    fill_children(self, iter, dirpath);
+    g_free(dirpath);
+}
+
+static gboolean
+reveal_recursive(LrTreePane *self, GtkTreeIter *iter, const char *path,
+                 GtkTreeIter *out)
+{
+    GtkTreeModel *model = GTK_TREE_MODEL(self->store);
+    gchar *node_path = NULL;
+    gint kind = LR_SCAN_OTHER_FILE;
+
+    gtk_tree_model_get(model, iter, COL_PATH, &node_path, COL_KIND, &kind, -1);
+    if (node_path != NULL && g_str_equal(node_path, path))
+    {
+        g_free(node_path);
+        *out = *iter;
+        return TRUE;
+    }
+    g_free(node_path);
+
+    if (kind == LR_SCAN_DIR)
+    {
+        GtkTreeIter child;
+        ensure_children_loaded(self, iter);
+        if (gtk_tree_model_iter_children(model, &child, iter))
+        {
+            do
+            {
+                if (reveal_recursive(self, &child, path, out))
+                    return TRUE;
+            } while (gtk_tree_model_iter_next(model, &child));
+        }
+    }
+    return FALSE;
+}
+
+gboolean
+lr_tree_pane_reveal_path(LrTreePane *self, const char *path)
+{
+    GtkTreeModel *model = GTK_TREE_MODEL(self->store);
+    GtkTreeIter root, out;
+    GtkTreePath *tp;
+
+    if (path == NULL || *path == '\0')
+        return FALSE;
+    if (!gtk_tree_model_get_iter_first(model, &root))
+        return FALSE;
+    if (!reveal_recursive(self, &root, path, &out))
+        return FALSE;
+
+    tp = gtk_tree_model_get_path(model, &out);
+    gtk_tree_view_expand_to_path(self->view, tp);
+    gtk_tree_selection_select_path(gtk_tree_view_get_selection(self->view),
+                                   tp);
+    gtk_tree_view_scroll_to_cell(self->view, tp, NULL, FALSE, 0, 0);
+    gtk_tree_path_free(tp);
+    return TRUE;
+}
+
 void lr_tree_pane_free(LrTreePane *self)
 {
     if (self == NULL)

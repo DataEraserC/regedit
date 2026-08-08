@@ -8,6 +8,7 @@ struct _LrMainWindow
     LrTreePane *tree;
     LrValuePane *value;
     GtkWidget *statusbar;
+    GtkWidget *location_entry;
     guint status_ctx;
 };
 
@@ -21,11 +22,14 @@ on_tree_select(const char *path, gboolean is_dir, gpointer user_data)
     /* 计算机虚拟根（空路径） */
     if (path == NULL || *path == '\0')
     {
+        gtk_entry_set_text(GTK_ENTRY(mw->location_entry), "计算机");
         lr_value_pane_clear(mw->value);
         gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
                            "计算机");
         return;
     }
+
+    gtk_entry_set_text(GTK_ENTRY(mw->location_entry), path);
 
     if (is_dir)
     {
@@ -157,28 +161,76 @@ build_menubar(LrMainWindow *mw)
     return menubar;
 }
 
-static GtkWidget *
-build_toolbar(LrMainWindow *mw)
+static void
+on_location_activate(GtkWidget *widget, gpointer user_data)
 {
-    GtkWidget *toolbar = gtk_toolbar_new();
-    GtkToolItem *item;
+    LrMainWindow *mw = user_data;
+    const gchar *text = gtk_entry_get_text(GTK_ENTRY(widget));
+    gchar *path;
 
-    gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH_HORIZ);
+    if (text == NULL)
+        return;
+    path = g_strstrip(g_strdup(text));
+    if (*path == '\0')
+    {
+        g_free(path);
+        return;
+    }
 
-    item = gtk_tool_button_new(
-        gtk_image_new_from_icon_name("view-refresh", GTK_ICON_SIZE_SMALL_TOOLBAR),
-        "刷新");
-    g_signal_connect(item, "clicked", G_CALLBACK(on_refresh), mw);
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), item, -1);
+    gtk_statusbar_remove_all(GTK_STATUSBAR(mw->statusbar), mw->status_ctx);
 
-    return toolbar;
+    /* 优先在树中定位（成功则选择回调会同步右侧与状态栏） */
+    if (lr_tree_pane_reveal_path(mw->tree, path))
+    {
+        g_free(path);
+        return;
+    }
+
+    gtk_entry_set_text(GTK_ENTRY(mw->location_entry), path);
+
+    if (g_file_test(path, G_FILE_TEST_IS_DIR))
+    {
+        lr_value_pane_clear(mw->value);
+        gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
+                           path);
+    }
+    else
+    {
+        lr_value_pane_load_file(mw->value, path);
+        gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
+                           path);
+    }
+    g_free(path);
+}
+
+static GtkWidget *
+build_location_bar(LrMainWindow *mw)
+{
+    GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *label = gtk_label_new("位置：");
+
+    gtk_widget_set_margin_start(bar, 8);
+    gtk_widget_set_margin_end(bar, 8);
+    gtk_widget_set_margin_top(bar, 4);
+    gtk_widget_set_margin_bottom(bar, 4);
+
+    mw->location_entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(mw->location_entry),
+                                   "输入路径后回车跳转");
+
+    gtk_box_pack_start(GTK_BOX(bar), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(bar), mw->location_entry, TRUE, TRUE, 0);
+
+    g_signal_connect(mw->location_entry, "activate",
+                     G_CALLBACK(on_location_activate), mw);
+    return bar;
 }
 
 LrMainWindow *
 lr_main_window_new(void)
 {
     LrMainWindow *mw = g_new0(LrMainWindow, 1);
-    GtkWidget *vbox, *menubar, *toolbar, *paned;
+    GtkWidget *vbox, *menubar, *location_bar, *paned;
 
     mw->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(mw->window), "linux-regedit");
@@ -188,7 +240,7 @@ lr_main_window_new(void)
     vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
     menubar = build_menubar(mw);
-    toolbar = build_toolbar(mw);
+    location_bar = build_location_bar(mw);
 
     paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     mw->tree = lr_tree_pane_new();
@@ -206,7 +258,7 @@ lr_main_window_new(void)
                        "就绪：选择左侧配置文件");
 
     gtk_box_pack_start(GTK_BOX(vbox), menubar, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(vbox), toolbar, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), location_bar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), paned, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), mw->statusbar, FALSE, FALSE, 0);
 

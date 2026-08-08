@@ -26,6 +26,9 @@ void lr_tree_pane_refresh(LrTreePane *self);
 void lr_tree_pane_expand_all(LrTreePane *self);
 void lr_tree_pane_collapse_all(LrTreePane *self);
 
+/* 在树中定位路径（逐级加载、展开并选中），成功返回 TRUE */
+gboolean lr_tree_pane_reveal_path(LrTreePane *self, const char *path);
+
 void lr_tree_pane_free(LrTreePane *self);
 
 #endif /* LR_UI_TREE_PANE_H */
