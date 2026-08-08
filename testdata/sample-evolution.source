@@ -1,0 +1,14 @@
+# sample-evolution.source —— Evolution 数据源配置示例
+# 含语言标签键（DisplayName[xx]）与多节，曾因 [ 开头被误判为 JSON
+[Data Source]
+DisplayName=Default Proxy Settings
+DisplayName[zh_CN]=默认代理设置
+Enabled=true
+Parent=
+
+[Proxy]
+Method=default
+IgnoreHosts=localhost;127.0.0.1;::1;
+HttpHost=
+HttpPort=8080
+HttpUseAuth=false

@@ -389,5 +389,34 @@ void test_parsers(void)
             TEST_ASSERT(!lr_format_supported(lr_format_detect(p)));
             g_free(p);
         }
+
+        /* Evolution 数据源：含语言标签键与多节，[ 开头不得误判为 JSON */
+        {
+            gchar *p = g_build_filename(td, "sample-evolution.source", NULL);
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_INI);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 9);
+
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->key, "DisplayName");
+            TEST_ASSERT_STR_EQ(it->section, "Data Source");
+
+            it = g_ptr_array_index(f->items, 1);
+            TEST_ASSERT_STR_EQ(it->key, "DisplayName[zh_CN]");
+            TEST_ASSERT_STR_EQ(it->data, "默认代理设置");
+
+            it = g_ptr_array_index(f->items, 4);
+            TEST_ASSERT_STR_EQ(it->key, "Method");
+            TEST_ASSERT_STR_EQ(it->section, "Proxy");
+
+            it = g_ptr_array_index(f->items, 8);
+            TEST_ASSERT_STR_EQ(it->key, "HttpUseAuth");
+            TEST_ASSERT(it->type == LR_VALUE_BOOL);
+
+            lr_config_file_free(f);
+            g_free(p);
+        }
     }
 }

@@ -1,6 +1,7 @@
 #include "core/format.h"
 
 #include <string.h>
+#include <json-glib/json-glib.h>
 #include "core/parsers/ini.h"
 #include "core/parsers/json.h"
 #include "core/parsers/keyword.h"
@@ -43,6 +44,33 @@ read_head(const char *path, gsize max)
         return head;
     }
     return content;
+}
+
+/* 判断文件是否为合法 JSON 数组（[ 开头可能是 INI 节，需整体验证） */
+static gboolean
+is_json_array(const char *path)
+{
+    gchar *content = NULL;
+    GError *error = NULL;
+    JsonParser *parser;
+    JsonNode *root;
+    gboolean ok = FALSE;
+
+    if (!g_file_get_contents(path, &content, NULL, &error))
+    {
+        g_clear_error(&error);
+        return FALSE;
+    }
+
+    parser = json_parser_new();
+    if (json_parser_load_from_data(parser, content, -1, NULL))
+    {
+        root = json_parser_get_root(parser);
+        ok = root != NULL && JSON_NODE_TYPE(root) == JSON_NODE_ARRAY;
+    }
+    g_object_unref(parser);
+    g_free(content);
+    return ok;
 }
 
 /* 判断一行是否为「关键字 + 参数」样式（sshd_config 等）：
@@ -91,12 +119,18 @@ lr_format_detect(const char *path)
         return LR_FORMAT_UNKNOWN;
     }
 
-    /* JSON：内容以 { 或 [ 开头（去除前导空白） */
+    /* JSON：内容以 { 开头 → JSON；以 [ 开头可能是 INI 节，
+     * 需验证整个文件是否为合法 JSON 数组 */
     {
         const char *p = head;
         while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
             p++;
-        if (*p == '{' || *p == '[')
+        if (*p == '{')
+        {
+            g_free(head);
+            return LR_FORMAT_JSON;
+        }
+        if (*p == '[' && is_json_array(path))
         {
             g_free(head);
             return LR_FORMAT_JSON;

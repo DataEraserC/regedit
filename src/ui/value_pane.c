@@ -32,7 +32,7 @@ struct _LrValuePane
     GtkWidget *table_page;
     GtkWidget *text_page;
     GtkTreeView *view;
-    GtkListStore *store;
+    GtkTreeStore *store;
     GtkTextView *text;
     GtkLabel *info_title;   /* 底部说明面板标题 */
     GtkTextView *info_text; /* 底部说明面板内容 */
@@ -219,7 +219,14 @@ on_table_selection_changed(GtkTreeSelection *sel, gpointer user_data)
 
     gtk_tree_model_get(model, &iter, COL_NAME, &name, -1);
     if (name != NULL && *name != '\0')
-        lr_value_pane_show_man(self, name);
+    {
+        gchar *type = NULL;
+        gtk_tree_model_get(model, &iter, COL_TYPE, &type, -1);
+        /* 节行（Section）不查询 man */
+        if (g_strcmp0(type, "Section") != 0)
+            lr_value_pane_show_man(self, name);
+        g_free(type);
+    }
     g_free(name);
 }
 
@@ -427,21 +434,58 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
             return;
         }
 
-        gtk_list_store_clear(self->store);
-        for (i = 0; i < file->items->len; i++)
-        {
-            LrConfigItem *item = g_ptr_array_index(file->items, i);
-            GtkTreeIter iter;
+        gtk_tree_store_clear(self->store);
 
-            gtk_list_store_append(self->store, &iter);
-            gtk_list_store_set(self->store, &iter,
-                               COL_ENABLED, item->enabled ? "true" : "false",
-                               COL_NAME, item->key,
-                               COL_TYPE, lr_value_type_name(item->type),
-                               COL_DATA, item->data,
-                               COL_COMMENT, item->comment != NULL ? item->comment : "",
-                               -1);
+        /* 按节分组：每个节一个可展开的父行（如 [server]） */
+        {
+            GHashTable *sections = g_hash_table_new_full(
+                g_str_hash, g_str_equal, g_free, g_free);
+
+            for (i = 0; i < file->items->len; i++)
+            {
+                LrConfigItem *item = g_ptr_array_index(file->items, i);
+                GtkTreeIter iter;
+                GtkTreeIter *parent = NULL;
+
+                if (item->section != NULL && *item->section != '\0')
+                {
+                    parent = g_hash_table_lookup(sections, item->section);
+                    if (parent == NULL)
+                    {
+                        GtkTreeIter sit;
+                        gchar *sname =
+                            g_strdup_printf("[%s]", item->section);
+                        gtk_tree_store_append(self->store, &sit, NULL);
+                        gtk_tree_store_set(self->store, &sit,
+                                           COL_ENABLED, "",
+                                           COL_NAME, sname,
+                                           COL_TYPE, "Section",
+                                           COL_DATA, "",
+                                           COL_COMMENT, "",
+                                           -1);
+                        g_free(sname);
+                        parent = g_memdup2(&sit, sizeof(GtkTreeIter));
+                        g_hash_table_insert(sections,
+                                            g_strdup(item->section), parent);
+                    }
+                }
+
+                gtk_tree_store_append(self->store, &iter, parent);
+                gtk_tree_store_set(self->store, &iter,
+                                   COL_ENABLED,
+                                   item->enabled ? "true" : "false",
+                                   COL_NAME, item->key,
+                                   COL_TYPE, lr_value_type_name(item->type),
+                                   COL_DATA, item->data,
+                                   COL_COMMENT, item->comment != NULL ? item->comment : "",
+                                   -1);
+            }
+
+            g_hash_table_destroy(sections);
         }
+
+        /* 默认展开所有节 */
+        gtk_tree_view_expand_all(self->view);
 
         gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "table");
         lr_config_file_free(file);
@@ -450,7 +494,7 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
 
 void lr_value_pane_clear(LrValuePane *self)
 {
-    gtk_list_store_clear(self->store);
+    gtk_tree_store_clear(self->store);
     gtk_tree_store_clear(self->json_store);
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "empty");
 }
@@ -478,7 +522,7 @@ lr_value_pane_new(void)
     /* --- 表格页 --- */
     self->table_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
-    self->store = gtk_list_store_new(N_COLS, G_TYPE_STRING, G_TYPE_STRING,
+    self->store = gtk_tree_store_new(N_COLS, G_TYPE_STRING, G_TYPE_STRING,
                                      G_TYPE_STRING, G_TYPE_STRING,
                                      G_TYPE_STRING);
     self->view = GTK_TREE_VIEW(gtk_tree_view_new_with_model(
