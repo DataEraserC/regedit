@@ -71,9 +71,8 @@ on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
 
             if (result->len > 0)
             {
-                gchar *filtered = g_strstrip(result->str);
-                gtk_text_buffer_set_text(buf, filtered, -1);
-                g_free(filtered);
+                g_strstrip(result->str);
+                gtk_text_buffer_set_text(buf, result->str, -1);
             }
             else
             {
@@ -147,6 +146,20 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
     }
 
     g_subprocess_communicate_async(proc, NULL, NULL, on_man_done, self);
+}
+
+/* 说明面板被显示时：若无选中行则隐藏（避免 show_all 等强制显示） */
+static void
+on_info_map(GtkWidget *widget, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GtkTreeIter iter;
+    GtkTreeModel *model;
+    (void)widget;
+
+    if (!gtk_tree_selection_get_selected(
+            gtk_tree_view_get_selection(self->view), &model, &iter))
+        gtk_widget_hide(self->info_page);
 }
 
 /* 表格选中行：查询该配置项名称的 man 说明 */
@@ -388,7 +401,8 @@ lr_value_pane_new(void)
 
         gtk_paned_pack2(GTK_PANED(self->widget), self->info_page, FALSE, FALSE);
         gtk_paned_set_position(GTK_PANED(self->widget), 400);
-        gtk_widget_hide(self->info_page);
+        g_signal_connect_after(self->info_page, "map",
+                               G_CALLBACK(on_info_map), self);
     }
 
     return self;
