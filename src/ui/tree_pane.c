@@ -185,6 +185,60 @@ on_row_expanded(GtkTreeView *view, GtkTreeIter *iter, GtkTreePath *tpath,
     g_free(dirpath);
 }
 
+/* 递归为目录行绘制左侧竖虚线：同级目录对齐成线，层级递进错位 */
+static void
+draw_tree_lines_recursive(LrTreePane *self, cairo_t *cr, GtkTreeIter *parent)
+{
+    GtkTreeModel *model = GTK_TREE_MODEL(self->store);
+    GtkTreeIter child;
+
+    if (!gtk_tree_model_iter_children(model, &child, parent))
+        return;
+
+    do
+    {
+        gint kind;
+        gtk_tree_model_get(model, &child, COL_KIND, &kind, -1);
+
+        if (kind == LR_SCAN_DIR)
+        {
+            GtkTreePath *path = gtk_tree_model_get_path(model, &child);
+            GdkRectangle rect;
+
+            gtk_tree_view_get_cell_area(self->view, path, NULL, &rect);
+            gtk_tree_path_free(path);
+
+            if (rect.height > 0)
+            {
+                double dashes[] = {2.0, 2.0};
+                double x = rect.x + 1;
+
+                cairo_save(cr);
+                cairo_set_source_rgba(cr, 0.55, 0.55, 0.55, 0.7);
+                cairo_set_line_width(cr, 1.0);
+                cairo_set_dash(cr, dashes, 2, 0);
+                cairo_move_to(cr, x + 0.5, rect.y + 2);
+                cairo_line_to(cr, x + 0.5, rect.y + rect.height - 2);
+                cairo_stroke(cr);
+                cairo_restore(cr);
+            }
+
+            draw_tree_lines_recursive(self, cr, &child);
+        }
+    } while (gtk_tree_model_iter_next(model, &child));
+}
+
+/* 在树视图默认绘制完成后叠加竖虚线 */
+static gboolean
+on_draw_after(GtkWidget *widget, cairo_t *cr, gpointer user_data)
+{
+    LrTreePane *self = user_data;
+    (void)widget;
+
+    draw_tree_lines_recursive(self, cr, NULL);
+    return FALSE;
+}
+
 /* 双击目录节点时展开/收起 */
 static void
 on_row_activated(GtkTreeView *view, GtkTreePath *path, GtkTreeViewColumn *col,
@@ -450,6 +504,8 @@ lr_tree_pane_new(void)
                      G_CALLBACK(on_row_expanded), self);
     g_signal_connect(self->view, "row-activated",
                      G_CALLBACK(on_row_activated), self);
+    g_signal_connect_after(self->view, "draw",
+                           G_CALLBACK(on_draw_after), self);
     g_signal_connect(self->view, "button-press-event",
                      G_CALLBACK(on_button_press), self);
     g_signal_connect(self->view, "popup-menu",
