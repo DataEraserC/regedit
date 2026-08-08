@@ -24,6 +24,8 @@ struct _LrTreePane
     GdkPixbuf *icon_config;
     GdkPixbuf *icon_other;
     GdkPixbuf *icon_computer;
+
+    GtkTreePath *popup_path; /* 右键菜单针对的节点 */
 };
 
 static GdkPixbuf *
@@ -227,6 +229,180 @@ on_selection_changed(GtkTreeSelection *sel, gpointer user_data)
     g_free(path);
 }
 
+/* 展开/折叠被右键的目录节点 */
+static void
+on_popup_expand_collapse(GtkMenuItem *item, gpointer user_data)
+{
+    LrTreePane *self = user_data;
+    (void)item;
+
+    if (self->popup_path == NULL)
+        return;
+    if (gtk_tree_view_row_expanded(self->view, self->popup_path))
+        gtk_tree_view_collapse_row(self->view, self->popup_path);
+    else
+        gtk_tree_view_expand_row(self->view, self->popup_path, FALSE);
+}
+
+/* 复制节点名称到剪贴板 */
+static void
+on_popup_copy_name(GtkMenuItem *item, gpointer user_data)
+{
+    LrTreePane *self = user_data;
+    GtkTreeIter iter;
+    gchar *name = NULL;
+    (void)item;
+
+    if (self->popup_path == NULL)
+        return;
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store), &iter,
+                                 self->popup_path))
+        return;
+
+    gtk_tree_model_get(GTK_TREE_MODEL(self->store), &iter, COL_NAME, &name, -1);
+    if (name != NULL)
+    {
+        GtkClipboard *clipboard =
+            gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+        gtk_clipboard_set_text(clipboard, name, -1);
+        g_free(name);
+    }
+}
+
+/* 尚未实现的功能：弹出提示 */
+static void
+on_popup_not_impl(GtkMenuItem *item, gpointer user_data)
+{
+    const gchar *label = user_data;
+    GtkWidget *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(item));
+    GtkWidget *dialog;
+
+    (void)item;
+    dialog = gtk_message_dialog_new(
+        GTK_WINDOW(toplevel), GTK_DIALOG_MODAL, GTK_MESSAGE_INFO,
+        GTK_BUTTONS_OK, "「%s」功能尚未实现，规划于后续版本。", label);
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+}
+
+static void
+show_popup_menu(LrTreePane *self, GtkTreePath *path, GdkEventButton *event)
+{
+    GtkTreeIter iter;
+    gint kind = LR_SCAN_OTHER_FILE;
+    GtkWidget *menu, *item;
+    gboolean expanded;
+
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store), &iter, path))
+        return;
+
+    gtk_tree_model_get(GTK_TREE_MODEL(self->store), &iter, COL_KIND, &kind, -1);
+    gtk_tree_selection_select_path(gtk_tree_view_get_selection(self->view),
+                                   path);
+    gtk_tree_view_set_cursor(self->view, path, NULL, FALSE);
+
+    g_clear_pointer(&self->popup_path, gtk_tree_path_free);
+    self->popup_path = gtk_tree_path_copy(path);
+
+    menu = gtk_menu_new();
+
+    /* 目录节点：展开/折叠（按当前状态显示） + 新建 */
+    if (kind == LR_SCAN_DIR)
+    {
+        expanded = gtk_tree_view_row_expanded(self->view, path);
+        item = gtk_menu_item_new_with_label(expanded ? "折叠" : "展开");
+        g_signal_connect(item, "activate",
+                         G_CALLBACK(on_popup_expand_collapse), self);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+        item = gtk_separator_menu_item_new();
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+        item = gtk_menu_item_new_with_label("新建");
+        g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
+                         (gpointer)"新建");
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    }
+
+    item = gtk_menu_item_new_with_label("查找");
+    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
+                     (gpointer)"查找");
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("删除");
+    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
+                     (gpointer)"删除");
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("重命名");
+    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
+                     (gpointer)"重命名");
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("导出");
+    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
+                     (gpointer)"导出");
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("权限");
+    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
+                     (gpointer)"权限");
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("复制项名称");
+    g_signal_connect(item, "activate", G_CALLBACK(on_popup_copy_name), self);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    gtk_widget_show_all(menu);
+    gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
+}
+
+/* 右键点击树节点 */
+static gboolean
+on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+    LrTreePane *self = user_data;
+    GtkTreePath *path = NULL;
+    (void)widget;
+
+    if (event->type == GDK_BUTTON_PRESS && event->button == 3)
+    {
+        if (gtk_tree_view_get_path_at_pos(self->view, (gint)event->x,
+                                          (gint)event->y, &path, NULL, NULL,
+                                          NULL))
+        {
+            show_popup_menu(self, path, event);
+            gtk_tree_path_free(path);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* 键盘弹出菜单（Shift+F10 / 菜单键） */
+static gboolean
+on_popup_menu(GtkWidget *widget, gpointer user_data)
+{
+    LrTreePane *self = user_data;
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(self->view);
+    GtkTreeModel *model;
+    GtkTreeIter iter;
+    GtkTreePath *path;
+    (void)widget;
+
+    if (gtk_tree_selection_get_selected(sel, &model, &iter))
+    {
+        path = gtk_tree_model_get_path(model, &iter);
+        show_popup_menu(self, path, NULL);
+        gtk_tree_path_free(path);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 LrTreePane *
 lr_tree_pane_new(void)
 {
@@ -270,6 +446,10 @@ lr_tree_pane_new(void)
                      G_CALLBACK(on_row_expanded), self);
     g_signal_connect(self->view, "row-activated",
                      G_CALLBACK(on_row_activated), self);
+    g_signal_connect(self->view, "button-press-event",
+                     G_CALLBACK(on_button_press), self);
+    g_signal_connect(self->view, "popup-menu",
+                     G_CALLBACK(on_popup_menu), self);
     g_signal_connect(gtk_tree_view_get_selection(self->view), "changed",
                      G_CALLBACK(on_selection_changed), self);
 
@@ -397,6 +577,7 @@ void lr_tree_pane_free(LrTreePane *self)
 {
     if (self == NULL)
         return;
+    g_clear_pointer(&self->popup_path, gtk_tree_path_free);
     g_clear_object(&self->icon_folder);
     g_clear_object(&self->icon_config);
     g_clear_object(&self->icon_other);
