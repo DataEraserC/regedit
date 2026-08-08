@@ -457,5 +457,45 @@ void test_parsers(void)
             lr_config_file_free(f);
             g_free(p);
         }
+
+        /* XML：嵌套元素树 + 属性 */
+        {
+            gchar *p = g_build_filename(td, "sample.xml", NULL);
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_XML);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 11);
+
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->key, "@version");
+            TEST_ASSERT_STR_EQ(it->section, "monitors");
+            TEST_ASSERT_STR_EQ(it->data, "2");
+
+            it = g_ptr_array_index(f->items, 1);
+            TEST_ASSERT_STR_EQ(it->key, "layoutmode");
+            TEST_ASSERT_STR_EQ(it->section, "monitors::configuration");
+            TEST_ASSERT_STR_EQ(it->data, "physical");
+
+            it = g_ptr_array_index(f->items, 6);
+            TEST_ASSERT_STR_EQ(it->key, "connector");
+            TEST_ASSERT_STR_EQ(it->data, "Virtual-1");
+            TEST_ASSERT_STR_EQ(it->section,
+                               "monitors::configuration::logicalmonitor::"
+                               "monitor::monitorspec");
+
+            it = g_ptr_array_index(f->items, 8);
+            TEST_ASSERT_STR_EQ(it->key, "width");
+            TEST_ASSERT(it->type == LR_VALUE_NUMBER);
+            TEST_ASSERT_STR_EQ(it->data, "1814");
+
+            it = g_ptr_array_index(f->items, 10);
+            TEST_ASSERT_STR_EQ(it->key, "rate");
+            TEST_ASSERT(it->type == LR_VALUE_NUMBER);
+            TEST_ASSERT_STR_EQ(it->data, "59.998");
+
+            lr_config_file_free(f);
+            g_free(p);
+        }
     }
 }

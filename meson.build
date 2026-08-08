@@ -33,6 +33,7 @@ lr_core_sources = files(
   'src/core/parsers/keyword.c',
   'src/core/parsers/json.c',
   'src/core/parsers/apt.c',
+  'src/core/parsers/xml.c',
 )
 
 lr_core_inc = include_directories('src')

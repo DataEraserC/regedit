@@ -8,6 +8,7 @@
 #include "core/parsers/kv.h"
 #include "core/parsers/systemd.h"
 #include "core/parsers/apt.h"
+#include "core/parsers/xml.h"
 
 static gboolean
 has_systemd_extension(const char *path)
@@ -195,6 +196,34 @@ sniff_apt(const char *content, gsize len, const char *path)
     return is_apt_config(content, len);
 }
 
+/* XML：以 < 开头，且整体是合法 XML（GMarkup 验证） */
+static gboolean
+sniff_xml(const char *content, gsize len, const char *path)
+{
+    const char *p = content;
+    GMarkupParser parser = {0}; /* 全 NULL 回调：仅用于验证合法性 */
+    GMarkupParseContext *ctx;
+    GError *error = NULL;
+    gboolean ok = FALSE;
+
+    (void)path;
+    if (content == NULL)
+        return FALSE;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+        p++;
+    if (*p != '<')
+        return FALSE;
+
+    ctx = g_markup_parse_context_new(&parser, 0, NULL, NULL);
+    if (g_markup_parse_context_parse(ctx, content, (gssize)len, &error) &&
+        g_markup_parse_context_end_parse(ctx, &error))
+        ok = TRUE;
+    if (error != NULL)
+        g_clear_error(&error);
+    g_markup_parse_context_free(ctx);
+    return ok;
+}
+
 static gboolean
 sniff_ini(const char *content, gsize len, const char *path)
 {
@@ -238,6 +267,7 @@ typedef struct
 static const LrFormatDriver k_drivers[] = {
     {"systemd unit", LR_FORMAT_SYSTEMD, sniff_systemd, lr_parse_systemd},
     {"JSON", LR_FORMAT_JSON, sniff_json, lr_parse_json},
+    {"XML", LR_FORMAT_XML, sniff_xml, lr_parse_xml},
     {"apt 配置", LR_FORMAT_APT, sniff_apt, lr_parse_apt},
     {"INI", LR_FORMAT_INI, sniff_ini, lr_parse_ini},
     {"键值对", LR_FORMAT_KV, sniff_kv, lr_parse_kv},

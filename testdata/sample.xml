@@ -1,0 +1,22 @@
+<monitors version="2">
+  <configuration>
+    <layoutmode>physical</layoutmode>
+    <logicalmonitor>
+      <x>0</x>
+      <y>0</y>
+      <scale>1</scale>
+      <primary>yes</primary>
+      <monitor>
+        <monitorspec>
+          <connector>Virtual-1</connector>
+          <vendor>unknown</vendor>
+        </monitorspec>
+        <mode>
+          <width>1814</width>
+          <height>1151</height>
+          <rate>59.998</rate>
+        </mode>
+      </monitor>
+    </logicalmonitor>
+  </configuration>
+</monitors>
