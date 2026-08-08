@@ -235,15 +235,15 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
 
     gtk_text_buffer_set_text(buf, "正在查询 man ...", -1);
 
-    /* 排版全部交给 GTK（GtkTextView 自动折行）：
+    /* 排版交给 GTK（GtkTextView 自动折行）：
+     *  - MANWIDTH 设很大 → groff 不按终端宽度折行，只保留内容本身的换行
+     *    （段落、列表、缩进等结构不受影响）
      *  - --no-hyphenation 禁用断词（避免 LOCAL1 → LO‐+换行+CAL1）
-     *  - --no-justification 禁用两端对齐
-     *  - awk 把段落内的折行换行合并为空格、压缩多余空白，保留空行分段 */
+     *  - --no-justification 禁用两端对齐 */
     quoted = g_shell_quote(self->current_basename);
     cmd = g_strdup_printf(
-        "man --no-hyphenation --no-justification 5 %s 2>/dev/null | col -b "
-        "| awk 'BEGIN{RS=\"\";ORS=\"\\n\\n\"}{gsub(/\\n/,\" \");"
-        "gsub(/[ \\t]+/,\" \");print}'",
+        "MANWIDTH=100000 man --no-hyphenation --no-justification 5 %s "
+        "2>/dev/null | col -b",
         quoted);
     g_free(quoted);
 
