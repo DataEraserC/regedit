@@ -40,7 +40,8 @@ void test_parsers(void)
         TEST_ASSERT_STR_EQ(it->key, "Enable");
         TEST_ASSERT(it->type == LR_VALUE_BOOL);
         TEST_ASSERT_STR_EQ(it->data, "yes");
-        TEST_ASSERT(it->comment == NULL);
+        /* 注释未被消费：下方配置项共用上方最近一条注释 */
+        TEST_ASSERT_STR_EQ(it->comment, "顶部注释");
 
         it = g_ptr_array_index(f->items, 2);
         TEST_ASSERT_STR_EQ(it->key, "Name");
@@ -71,9 +72,15 @@ void test_parsers(void)
         TEST_ASSERT(it->type == LR_VALUE_STRING);
         TEST_ASSERT_STR_EQ(it->comment, "环境变量");
 
+        /* 同一条注释说明其下方多个配置项 */
+        it = g_ptr_array_index(f->items, 1);
+        TEST_ASSERT_STR_EQ(it->key, "LANG");
+        TEST_ASSERT_STR_EQ(it->comment, "环境变量");
+
         it = g_ptr_array_index(f->items, 2);
         TEST_ASSERT_STR_EQ(it->key, "DEBUG");
         TEST_ASSERT(it->type == LR_VALUE_BOOL);
+        TEST_ASSERT_STR_EQ(it->comment, "环境变量");
 
         lr_config_file_free(f);
         g_unlink(p);

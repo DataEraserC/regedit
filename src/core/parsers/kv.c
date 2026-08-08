@@ -32,22 +32,11 @@ lr_parse_kv(const char *path, LrConfigFile *file)
         if (line[0] == '#' || line[0] == ';')
         {
             const char *p = line;
-            char *stripped;
 
             while (*p == '#' || *p == ';')
                 p++;
-            stripped = g_strstrip(g_strdup(p));
-            if (pending_comment == NULL)
-            {
-                pending_comment = g_strdup(stripped);
-            }
-            else
-            {
-                char *old = pending_comment;
-                pending_comment = g_strconcat(old, "\n", stripped, NULL);
-                g_free(old);
-            }
-            g_free(stripped);
+            g_free(pending_comment);
+            pending_comment = g_strstrip(g_strdup(p));
             continue;
         }
 
@@ -74,8 +63,6 @@ lr_parse_kv(const char *path, LrConfigFile *file)
             g_ptr_array_add(file->items, item);
             file->parsed = TRUE;
 
-            g_free(pending_comment);
-            pending_comment = NULL;
             g_free(key);
             g_free(raw_value);
             g_free(value);

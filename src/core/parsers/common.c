@@ -103,28 +103,16 @@ lr_split_key_value(const char *line, const char *delims,
     return TRUE;
 }
 
-/* 将注释行累积进 pending（剥离行首注释符 # / ;） */
+/* 记录「上方最近的一条」注释说明：遇新注释替换，供下方多个配置项共用 */
 static void
 append_pending_comment(char **pending, const char *line)
 {
     const char *p = line;
-    char *stripped;
 
     while (*p == '#' || *p == ';')
         p++;
-    stripped = g_strstrip(g_strdup(p));
-
-    if (*pending == NULL)
-    {
-        *pending = g_strdup(stripped);
-    }
-    else
-    {
-        char *old = *pending;
-        *pending = g_strconcat(old, "\n", stripped, NULL);
-        g_free(old);
-    }
-    g_free(stripped);
+    g_free(*pending);
+    *pending = g_strstrip(g_strdup(p));
 }
 
 gboolean
@@ -198,8 +186,6 @@ lr_parse_section_kv(const char *path, LrConfigFile *file)
             g_ptr_array_add(file->items, item);
             file->parsed = TRUE;
 
-            g_free(pending_comment);
-            pending_comment = NULL;
             g_free(key);
             g_free(raw_value);
             g_free(value);
