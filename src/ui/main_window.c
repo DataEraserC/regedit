@@ -7,9 +7,7 @@ struct _LrMainWindow
     GtkWidget *window;
     LrTreePane *tree;
     LrValuePane *value;
-    GtkWidget *statusbar;
     GtkWidget *location_entry;
-    guint status_ctx;
 };
 
 static void
@@ -17,32 +15,20 @@ on_tree_select(const char *path, gboolean is_dir, gpointer user_data)
 {
     LrMainWindow *mw = user_data;
 
-    gtk_statusbar_remove_all(GTK_STATUSBAR(mw->statusbar), mw->status_ctx);
-
     /* 计算机虚拟根（空路径） */
     if (path == NULL || *path == '\0')
     {
         gtk_entry_set_text(GTK_ENTRY(mw->location_entry), "计算机");
         lr_value_pane_clear(mw->value);
-        gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
-                           "计算机");
         return;
     }
 
     gtk_entry_set_text(GTK_ENTRY(mw->location_entry), path);
 
     if (is_dir)
-    {
         lr_value_pane_clear(mw->value);
-        gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
-                           path);
-    }
     else
-    {
         lr_value_pane_load_file(mw->value, path);
-        gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
-                           path);
-    }
 }
 
 static void
@@ -177,9 +163,7 @@ on_location_activate(GtkWidget *widget, gpointer user_data)
         return;
     }
 
-    gtk_statusbar_remove_all(GTK_STATUSBAR(mw->statusbar), mw->status_ctx);
-
-    /* 优先在树中定位（成功则选择回调会同步右侧与状态栏） */
+    /* 优先在树中定位（成功则选择回调会同步右侧） */
     if (lr_tree_pane_reveal_path(mw->tree, path))
     {
         g_free(path);
@@ -189,17 +173,9 @@ on_location_activate(GtkWidget *widget, gpointer user_data)
     gtk_entry_set_text(GTK_ENTRY(mw->location_entry), path);
 
     if (g_file_test(path, G_FILE_TEST_IS_DIR))
-    {
         lr_value_pane_clear(mw->value);
-        gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
-                           path);
-    }
     else
-    {
         lr_value_pane_load_file(mw->value, path);
-        gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
-                           path);
-    }
     g_free(path);
 }
 
@@ -248,16 +224,9 @@ lr_main_window_new(void)
                     TRUE, TRUE);
     gtk_paned_set_position(GTK_PANED(paned), 320);
 
-    mw->statusbar = gtk_statusbar_new();
-    mw->status_ctx = gtk_statusbar_get_context_id(GTK_STATUSBAR(mw->statusbar),
-                                                  "main");
-    gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
-                       "就绪：选择左侧配置文件");
-
     gtk_box_pack_start(GTK_BOX(vbox), menubar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), location_bar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), paned, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(vbox), mw->statusbar, FALSE, FALSE, 0);
 
     gtk_container_add(GTK_CONTAINER(mw->window), vbox);
 

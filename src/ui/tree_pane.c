@@ -179,6 +179,30 @@ on_row_expanded(GtkTreeView *view, GtkTreeIter *iter, GtkTreePath *tpath,
     g_free(dirpath);
 }
 
+/* 双击目录节点时展开/收起 */
+static void
+on_row_activated(GtkTreeView *view, GtkTreePath *path, GtkTreeViewColumn *col,
+                 gpointer user_data)
+{
+    LrTreePane *self = user_data;
+    GtkTreeIter iter;
+    gint kind;
+
+    (void)view;
+    (void)col;
+
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store), &iter, path))
+        return;
+    gtk_tree_model_get(GTK_TREE_MODEL(self->store), &iter, COL_KIND, &kind, -1);
+    if (kind != LR_SCAN_DIR)
+        return;
+
+    if (gtk_tree_view_row_expanded(self->view, path))
+        gtk_tree_view_collapse_row(self->view, path);
+    else
+        gtk_tree_view_expand_row(self->view, path, FALSE);
+}
+
 static void
 on_selection_changed(GtkTreeSelection *sel, gpointer user_data)
 {
@@ -244,6 +268,8 @@ lr_tree_pane_new(void)
 
     g_signal_connect(self->view, "row-expanded",
                      G_CALLBACK(on_row_expanded), self);
+    g_signal_connect(self->view, "row-activated",
+                     G_CALLBACK(on_row_activated), self);
     g_signal_connect(gtk_tree_view_get_selection(self->view), "changed",
                      G_CALLBACK(on_selection_changed), self);
 
