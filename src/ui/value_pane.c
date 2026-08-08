@@ -1,6 +1,9 @@
 #include "ui/value_pane.h"
 #include "core/format.h"
 
+/* 底部 man 说明面板的固定高度（像素） */
+#define LR_INFO_HEIGHT 200
+
 enum
 {
     COL_ENABLED = 0,
@@ -146,6 +149,23 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
     }
 
     g_subprocess_communicate_async(proc, NULL, NULL, on_man_done, self);
+}
+
+/* 窗口尺寸变化时保持说明面板为固定高度（而非随比例伸缩） */
+static void
+on_paned_allocate(GtkWidget *widget, GdkRectangle *alloc, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    gint pos, cur;
+
+    (void)widget;
+
+    pos = alloc->height - LR_INFO_HEIGHT;
+    if (pos <= 100)
+        return;
+    cur = gtk_paned_get_position(GTK_PANED(self->widget));
+    if (pos != cur)
+        gtk_paned_set_position(GTK_PANED(self->widget), pos);
 }
 
 /* 说明面板被显示时：若无选中行则隐藏（避免 show_all 等强制显示） */
@@ -400,7 +420,8 @@ lr_value_pane_new(void)
                            0);
 
         gtk_paned_pack2(GTK_PANED(self->widget), self->info_page, FALSE, FALSE);
-        gtk_paned_set_position(GTK_PANED(self->widget), 400);
+        g_signal_connect(self->widget, "size-allocate",
+                         G_CALLBACK(on_paned_allocate), self);
         g_signal_connect_after(self->info_page, "map",
                                G_CALLBACK(on_info_map), self);
     }
