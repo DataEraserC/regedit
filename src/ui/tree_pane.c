@@ -75,11 +75,11 @@ add_computer_root(LrTreePane *self)
                        COL_LOADED, TRUE,
                        -1);
 
-    /* /etc —— 系统级配置（类比 HKEY_LOCAL_MACHINE） */
+    /* HKEY_LOCAL_MACHINE —— 系统级配置，对应 /etc */
     gtk_tree_store_append(self->store, &etc, &computer);
     gtk_tree_store_set(self->store, &etc,
                        COL_ICON, self->icon_folder,
-                       COL_NAME, "/etc",
+                       COL_NAME, "HKEY_LOCAL_MACHINE",
                        COL_PATH, "/etc",
                        COL_KIND, LR_SCAN_DIR,
                        COL_FORMAT, LR_FORMAT_UNKNOWN,
@@ -87,11 +87,11 @@ add_computer_root(LrTreePane *self)
                        -1);
     add_dummy_child(self, &etc);
 
-    /* ~/.config —— 用户级配置（类比 HKEY_CURRENT_USER） */
+    /* HKEY_CURRENT_USER —— 用户级配置，对应 ~/.config */
     gtk_tree_store_append(self->store, &user, &computer);
     gtk_tree_store_set(self->store, &user,
                        COL_ICON, self->icon_folder,
-                       COL_NAME, "~/.config",
+                       COL_NAME, "HKEY_CURRENT_USER",
                        COL_PATH, config,
                        COL_KIND, LR_SCAN_DIR,
                        COL_FORMAT, LR_FORMAT_UNKNOWN,
