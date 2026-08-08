@@ -12,4 +12,7 @@ LrMainWindow *lr_main_window_new(void);
 GtkWidget *lr_main_window_get_window(LrMainWindow *self);
 void lr_main_window_free(LrMainWindow *self);
 
+/* 从 /run 会话状态恢复窗口大小、位置与上次路径 */
+void lr_main_window_restore_state(LrMainWindow *self);
+
 #endif /* LR_UI_MAIN_WINDOW_H */

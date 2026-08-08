@@ -8,6 +8,7 @@ struct _LrMainWindow
     LrTreePane *tree;
     LrValuePane *value;
     GtkWidget *location_entry;
+    char *current_path; /* 当前打开/选中的路径 */
 };
 
 static void
@@ -20,10 +21,15 @@ on_tree_select(const char *path, gboolean is_dir, gpointer user_data)
     {
         gtk_entry_set_text(GTK_ENTRY(mw->location_entry), "计算机");
         lr_value_pane_clear(mw->value);
+        g_free(mw->current_path);
+        mw->current_path = NULL;
         return;
     }
 
     gtk_entry_set_text(GTK_ENTRY(mw->location_entry), path);
+
+    g_free(mw->current_path);
+    mw->current_path = g_strdup(path);
 
     if (is_dir)
         lr_value_pane_clear(mw->value);
@@ -218,6 +224,98 @@ build_location_bar(LrMainWindow *mw)
     return bar;
 }
 
+/* 将窗口状态与上次路径保存到 /run（本次开机有效，重启清空） */
+static void
+lr_main_window_save_state(LrMainWindow *self)
+{
+    const char *runtime = g_get_user_runtime_dir();
+    gchar *dir, *file, *data;
+    GKeyFile *kf;
+    gint w = 0, h = 0, x = 0, y = 0;
+
+    if (runtime == NULL)
+        return;
+
+    dir = g_build_filename(runtime, "linux-regedit", NULL);
+    g_mkdir_with_parents(dir, 0755);
+    file = g_build_filename(dir, "state.ini", NULL);
+
+    kf = g_key_file_new();
+    if (self->current_path != NULL)
+        g_key_file_set_string(kf, "main", "path", self->current_path);
+
+    gtk_window_get_size(GTK_WINDOW(self->window), &w, &h);
+    gtk_window_get_position(GTK_WINDOW(self->window), &x, &y);
+    g_key_file_set_integer(kf, "window", "width", w);
+    g_key_file_set_integer(kf, "window", "height", h);
+    g_key_file_set_integer(kf, "window", "x", x);
+    g_key_file_set_integer(kf, "window", "y", y);
+
+    data = g_key_file_to_data(kf, NULL, NULL);
+    if (data != NULL)
+    {
+        g_file_set_contents(file, data, -1, NULL);
+        g_free(data);
+    }
+    g_key_file_free(kf);
+    g_free(file);
+    g_free(dir);
+}
+
+static void
+on_window_destroy(GtkWidget *widget, gpointer user_data)
+{
+    LrMainWindow *self = user_data;
+    (void)widget;
+    lr_main_window_save_state(self);
+}
+
+void lr_main_window_restore_state(LrMainWindow *self)
+{
+    const char *runtime = g_get_user_runtime_dir();
+    gchar *dir, *file;
+    GKeyFile *kf = NULL;
+    GError *error = NULL;
+
+    if (runtime == NULL)
+        return;
+
+    dir = g_build_filename(runtime, "linux-regedit", NULL);
+    file = g_build_filename(dir, "state.ini", NULL);
+
+    kf = g_key_file_new();
+    if (g_key_file_load_from_file(kf, file, G_KEY_FILE_NONE, &error))
+    {
+        gint w, h, x, y;
+
+        w = g_key_file_get_integer(kf, "window", "width", NULL);
+        h = g_key_file_get_integer(kf, "window", "height", NULL);
+        if (w > 0 && h > 0)
+            gtk_window_resize(GTK_WINDOW(self->window), w, h);
+
+        x = g_key_file_get_integer(kf, "window", "x", NULL);
+        y = g_key_file_get_integer(kf, "window", "y", NULL);
+        gtk_window_move(GTK_WINDOW(self->window), x, y);
+
+        {
+            gchar *path = g_key_file_get_string(kf, "main", "path", NULL);
+            if (path != NULL)
+            {
+                lr_tree_pane_reveal_path(self->tree, path);
+                g_free(path);
+            }
+        }
+    }
+    else
+    {
+        g_clear_error(&error);
+    }
+
+    g_key_file_free(kf);
+    g_free(file);
+    g_free(dir);
+}
+
 LrMainWindow *
 lr_main_window_new(void)
 {
@@ -228,6 +326,8 @@ lr_main_window_new(void)
     gtk_window_set_title(GTK_WINDOW(mw->window), "注册表编辑器");
     gtk_window_set_default_size(GTK_WINDOW(mw->window), 920, 600);
     gtk_window_set_position(GTK_WINDOW(mw->window), GTK_WIN_POS_CENTER);
+    g_signal_connect(mw->window, "destroy",
+                     G_CALLBACK(on_window_destroy), mw);
 
     vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
@@ -264,6 +364,7 @@ void lr_main_window_free(LrMainWindow *self)
 {
     if (self == NULL)
         return;
+    g_free(self->current_path);
     lr_tree_pane_free(self->tree);
     lr_value_pane_free(self->value);
     g_free(self);
