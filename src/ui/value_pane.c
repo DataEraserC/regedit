@@ -22,6 +22,9 @@ struct _LrValuePane
     GtkTextView *text;
     GtkLabel *info_title;   /* 底部说明面板标题 */
     GtkTextView *info_text; /* 底部说明面板内容 */
+    GtkWidget *info_page;   /* 底部说明面板容器 */
+    char *current_basename; /* 当前配置文件 basename（用于 man 5 查询） */
+    char *current_name;     /* 当前选中配置项名（用于过滤段落） */
 };
 
 static void
@@ -42,10 +45,53 @@ on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
     {
         gsize len = 0;
         const gchar *data = g_bytes_get_data(out, &len);
-        if (len > 0)
+        if (len > 0 && self->current_name != NULL)
+        {
+            /* 按段落过滤：只保留以当前配置项名开头的段落 */
+            gchar **paras = g_strsplit(data, "\n\n", -1);
+            GString *result = g_string_new(NULL);
+            guint i;
+
+            for (i = 0; paras[i] != NULL; i++)
+            {
+                const char *p = paras[i];
+                gsize n = strlen(self->current_name);
+
+                while (*p == ' ' || *p == '\t')
+                    p++;
+                if (strncmp(p, self->current_name, n) == 0 &&
+                    (p[n] == '\0' || p[n] == '\n' || p[n] == ' ' ||
+                     p[n] == '\t'))
+                {
+                    g_string_append(result, paras[i]);
+                    g_string_append(result, "\n\n");
+                }
+            }
+            g_strfreev(paras);
+
+            if (result->len > 0)
+            {
+                gchar *filtered = g_strstrip(result->str);
+                gtk_text_buffer_set_text(buf, filtered, -1);
+                g_free(filtered);
+            }
+            else
+            {
+                gchar *msg = g_strdup_printf("未找到「%s」的说明。",
+                                             self->current_name);
+                gtk_text_buffer_set_text(buf, msg, -1);
+                g_free(msg);
+            }
+            g_string_free(result, TRUE);
+        }
+        else if (len > 0)
+        {
             gtk_text_buffer_set_text(buf, data, (gint)MIN(len, G_MAXINT));
+        }
         else
+        {
             gtk_text_buffer_set_text(buf, "未找到该名称的 man 手册页。", -1);
+        }
     }
     else
     {
@@ -63,7 +109,13 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
     gchar *quoted, *cmd;
     GError *error = NULL;
     GSubprocess *proc;
-    gchar *title = g_strdup_printf("说明：%s（man）", name);
+    gchar *title = g_strdup_printf("说明：%s（man 5 %s）", name,
+                                   self->current_basename != NULL
+                                       ? self->current_basename
+                                       : "");
+
+    g_free(self->current_name);
+    self->current_name = g_strdup(name);
 
     gtk_label_set_text(self->info_title, title);
     g_free(title);
@@ -71,8 +123,15 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
     gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
                              "正在查询 man ...", -1);
 
-    quoted = g_shell_quote(name);
-    cmd = g_strdup_printf("man %s 2>/dev/null | col -b", quoted);
+    if (self->current_basename == NULL)
+    {
+        gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
+                                 "无法确定配置文件名。", -1);
+        return;
+    }
+
+    quoted = g_shell_quote(self->current_basename);
+    cmd = g_strdup_printf("man 5 %s 2>/dev/null | col -b", quoted);
     g_free(quoted);
 
     proc = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE, &error,
@@ -101,12 +160,15 @@ on_table_selection_changed(GtkTreeSelection *sel, gpointer user_data)
 
     if (!gtk_tree_selection_get_selected(sel, &model, &iter))
     {
-        gtk_label_set_text(self->info_title, "说明");
-        gtk_text_buffer_set_text(
-            gtk_text_view_get_buffer(self->info_text),
-            "在表格中选择一行，将在此显示该配置项名称的 man 手册说明。", -1);
+        /* 未选中：隐藏说明面板 */
+        if (self->info_page != NULL)
+            gtk_widget_hide(self->info_page);
         return;
     }
+
+    /* 选中：显示说明面板 */
+    if (self->info_page != NULL)
+        gtk_widget_show(self->info_page);
 
     gtk_tree_model_get(model, &iter, COL_NAME, &name, -1);
     if (name != NULL && *name != '\0')
@@ -145,6 +207,9 @@ show_text(LrValuePane *self, const char *path)
 void lr_value_pane_load_file(LrValuePane *self, const char *path)
 {
     LrConfigFormat fmt = lr_format_detect(path);
+
+    g_free(self->current_basename);
+    self->current_basename = g_path_get_basename(path);
 
     if (!lr_format_supported(fmt))
     {
@@ -296,15 +361,16 @@ lr_value_pane_new(void)
 
     /* --- 底部信息说明面板（选中表格行时显示 man 说明） --- */
     {
-        GtkWidget *info_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         GtkWidget *info_scrolled;
+
+        self->info_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
         self->info_title = GTK_LABEL(gtk_label_new("说明"));
         gtk_widget_set_halign(GTK_WIDGET(self->info_title), GTK_ALIGN_START);
         gtk_widget_set_margin_start(GTK_WIDGET(self->info_title), 6);
         gtk_widget_set_margin_top(GTK_WIDGET(self->info_title), 4);
         gtk_widget_set_margin_bottom(GTK_WIDGET(self->info_title), 2);
-        gtk_box_pack_start(GTK_BOX(info_page),
+        gtk_box_pack_start(GTK_BOX(self->info_page),
                            GTK_WIDGET(self->info_title), FALSE, FALSE, 0);
 
         self->info_text = GTK_TEXT_VIEW(gtk_text_view_new());
@@ -317,10 +383,12 @@ lr_value_pane_new(void)
                                        GTK_POLICY_AUTOMATIC);
         gtk_container_add(GTK_CONTAINER(info_scrolled),
                           GTK_WIDGET(self->info_text));
-        gtk_box_pack_start(GTK_BOX(info_page), info_scrolled, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(self->info_page), info_scrolled, TRUE, TRUE,
+                           0);
 
-        gtk_paned_pack2(GTK_PANED(self->widget), info_page, FALSE, FALSE);
-        gtk_paned_set_position(GTK_PANED(self->widget), 200);
+        gtk_paned_pack2(GTK_PANED(self->widget), self->info_page, FALSE, FALSE);
+        gtk_paned_set_position(GTK_PANED(self->widget), 400);
+        gtk_widget_hide(self->info_page);
     }
 
     return self;
@@ -336,5 +404,7 @@ void lr_value_pane_free(LrValuePane *self)
 {
     if (self == NULL)
         return;
+    g_free(self->current_basename);
+    g_free(self->current_name);
     g_free(self);
 }
