@@ -45,6 +45,7 @@ if get_option('tests')
   test_runner = executable('test_runner',
     'tests/test_value.c',
     'tests/test_parsers.c',
+    'tests/test_scanner.c',
     'tests/test_runner.c',
     link_with: lr_core,
     dependencies: [glibdep, giodep],

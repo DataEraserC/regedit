@@ -34,5 +34,6 @@ extern gint g_test_failures;
 
 void test_value_types(void);
 void test_parsers(void);
+void test_scanner(void);
 
 #endif /* LR_TEST_RUNNER_H */
