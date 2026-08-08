@@ -6,6 +6,7 @@
 #include "core/value.h"
 
 /* 解析 systemd unit 文件并填充 file->items，成功返回 TRUE */
-gboolean lr_parse_systemd(const char *path, LrConfigFile *file);
+gboolean lr_parse_systemd(const char *content, gsize len,
+                          LrConfigFile *file);
 
 #endif /* LR_CORE_PARSERS_SYSTEMD_H */

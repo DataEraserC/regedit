@@ -25,11 +25,17 @@ char *lr_strip_inline_comment(const char *value, char **comment_out);
 gboolean lr_split_key_value(const char *line, const char *delims,
                             char **key_out, char **value_out);
 
-/*
- * 逐行解析"节 + key=value"格式（INI / systemd 通用）。
- * 支持 # 与 ; 注释、[Section]、行内注释、去引号。
- * 成功返回 TRUE 并填充 file->items。
+/* * 判断一行是否为注释行（# / ; / // 开头），若是则将说明文字
+ * （剥离前缀并去空白）替换到 *pending，返回 TRUE；否则返回 FALSE。
+ * 供多个解析器共享「上方最近一条注释」逻辑。
  */
-gboolean lr_parse_section_kv(const char *path, LrConfigFile *file);
+gboolean lr_capture_comment(const char *line, char **pending);
+
+/* * 逐行解析"节 + key=value"格式（INI / systemd 通用）。
+ * 支持 # 与 ; 注释、[Section]、行内注释、去引号。
+ * content 为完整文件内容，len 为其长度。成功返回 TRUE 并填充 file->items。
+ */
+gboolean lr_parse_section_kv(const char *content, gsize len,
+                             LrConfigFile *file);
 
 #endif /* LR_CORE_PARSERS_COMMON_H */

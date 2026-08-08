@@ -7,6 +7,6 @@
 #include "core/value.h"
 
 /* 校验并解析 JSON 文件，合法则返回 TRUE 并置 file->parsed */
-gboolean lr_parse_json(const char *path, LrConfigFile *file);
+gboolean lr_parse_json(const char *content, gsize len, LrConfigFile *file);
 
 #endif /* LR_CORE_PARSERS_JSON_H */

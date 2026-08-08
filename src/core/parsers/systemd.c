@@ -2,7 +2,7 @@
 #include "core/parsers/common.h"
 
 gboolean
-lr_parse_systemd(const char *path, LrConfigFile *file)
+lr_parse_systemd(const char *content, gsize len, LrConfigFile *file)
 {
-    return lr_parse_section_kv(path, file);
+    return lr_parse_section_kv(content, len, file);
 }

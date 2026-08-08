@@ -7,6 +7,7 @@
  * 叶子项的 section 记录完整 :: 路径，UI 据此逐级构建可展开树。
  */
 #include "core/parsers/apt.h"
+#include "core/parsers/common.h"
 
 #include <string.h>
 
@@ -213,20 +214,16 @@ parse_line(AptCtx *ctx, GPtrArray *items, char *line, char **pending_comment)
 }
 
 gboolean
-lr_parse_apt(const char *path, LrConfigFile *file)
+lr_parse_apt(const char *content, gsize length, LrConfigFile *file)
 {
-    gchar *content = NULL;
-    gsize length = 0;
-    GError *error = NULL;
     gchar **lines, **linep;
     AptCtx ctx;
     char *pending_comment = NULL;
 
-    if (!g_file_get_contents(path, &content, &length, &error))
+    (void)length;
+    if (content == NULL)
     {
         file->parsed = FALSE;
-        file->error = g_strdup(error->message);
-        g_clear_error(&error);
         return FALSE;
     }
 
@@ -234,7 +231,6 @@ lr_parse_apt(const char *path, LrConfigFile *file)
     ctx.path = g_string_new(NULL);
 
     lines = g_strsplit(content, "\n", -1);
-    g_free(content);
 
     for (linep = lines; linep != NULL && *linep != NULL; linep++)
     {
@@ -244,21 +240,8 @@ lr_parse_apt(const char *path, LrConfigFile *file)
             continue;
 
         /* 注释：# 或 //（含 ##）→ 说明文字 */
-        if (line[0] == '#')
-        {
-            char *p = line;
-            while (*p == '#')
-                p++;
-            g_free(pending_comment);
-            pending_comment = g_strdup(g_strstrip(p));
+        if (lr_capture_comment(line, &pending_comment))
             continue;
-        }
-        if (line[0] == '/' && line[1] == '/')
-        {
-            g_free(pending_comment);
-            pending_comment = g_strdup(g_strstrip(line + 2));
-            continue;
-        }
 
         parse_line(&ctx, file->items, line, &pending_comment);
     }

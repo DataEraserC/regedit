@@ -2,25 +2,20 @@
 #include "core/parsers/common.h"
 
 gboolean
-lr_parse_kv(const char *path, LrConfigFile *file)
+lr_parse_kv(const char *content, gsize length, LrConfigFile *file)
 {
-    gchar *content = NULL;
-    gsize length = 0;
-    GError *error = NULL;
     gchar **lines = NULL;
     gchar **linep;
     char *pending_comment = NULL;
 
-    if (!g_file_get_contents(path, &content, &length, &error))
+    (void)length;
+    if (content == NULL)
     {
         file->parsed = FALSE;
-        file->error = g_strdup(error->message);
-        g_clear_error(&error);
         return FALSE;
     }
 
     lines = g_strsplit(content, "\n", -1);
-    g_free(content);
 
     for (linep = lines; linep != NULL && *linep != NULL; linep++)
     {
@@ -29,16 +24,9 @@ lr_parse_kv(const char *path, LrConfigFile *file)
         if (*line == '\0')
             continue;
 
-        if (line[0] == '#' || line[0] == ';')
-        {
-            const char *p = line;
-
-            while (*p == '#' || *p == ';')
-                p++;
-            g_free(pending_comment);
-            pending_comment = g_strstrip(g_strdup(p));
+        /* 注释行：说明文字（# / ;） */
+        if (lr_capture_comment(line, &pending_comment))
             continue;
-        }
 
         {
             char *key = NULL, *raw_value = NULL;

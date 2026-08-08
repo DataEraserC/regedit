@@ -231,30 +231,17 @@ on_table_selection_changed(GtkTreeSelection *sel, gpointer user_data)
     g_free(name);
 }
 
+/* 以文本视图展示内容（content 为 NULL 表示读取失败） */
 static void
-show_text(LrValuePane *self, const char *path)
+show_text_content(LrValuePane *self, const char *content, gsize length)
 {
-    GError *error = NULL;
-    gchar *content = NULL;
-    gsize length = 0;
     GtkTextBuffer *buf = gtk_text_view_get_buffer(self->text);
 
     gtk_text_buffer_set_text(buf, "", -1);
-
-    if (!g_file_get_contents(path, &content, &length, &error))
-    {
-        gchar *msg = g_strdup_printf("无法读取文件：%s",
-                                     error != NULL ? error->message
-                                                   : "未知错误");
-        gtk_text_buffer_set_text(buf, msg, -1);
-        g_free(msg);
-        g_clear_error(&error);
-    }
+    if (content == NULL)
+        gtk_text_buffer_set_text(buf, "无法读取文件。", -1);
     else
-    {
         gtk_text_buffer_set_text(buf, content, (gint)MIN(length, G_MAXINT));
-        g_free(content);
-    }
 
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "text");
 }
@@ -377,16 +364,15 @@ add_json_node(LrValuePane *self, JsonNode *node, const char *key,
 }
 
 static void
-lr_value_pane_load_json(LrValuePane *self, const char *path)
+lr_value_pane_load_json(LrValuePane *self, const char *content, gsize length)
 {
     JsonParser *parser = json_parser_new();
     GError *error = NULL;
-    gchar *content = NULL;
 
     gtk_tree_store_clear(self->json_store);
 
-    if (g_file_get_contents(path, &content, NULL, NULL) &&
-        json_parser_load_from_data(parser, content, -1, &error))
+    if (content != NULL &&
+        json_parser_load_from_data(parser, content, (gssize)length, &error))
     {
         JsonNode *root = json_parser_get_root(parser);
         gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "json");
@@ -395,45 +381,64 @@ lr_value_pane_load_json(LrValuePane *self, const char *path)
     }
     else
     {
-        show_text(self, path);
+        show_text_content(self, content, length);
     }
 
     if (error != NULL)
         g_error_free(error);
-    g_free(content);
     g_object_unref(parser);
 }
 
 void lr_value_pane_load_file(LrValuePane *self, const char *path)
 {
-    LrConfigFormat fmt = lr_format_detect(path);
+    gchar *content = NULL;
+    gsize len = 0;
+    GError *error = NULL;
+    LrConfigFormat fmt;
 
     g_free(self->current_basename);
     self->current_basename = g_path_get_basename(path);
 
+    /* 一次性读取内容，检测与解析复用，避免重复读文件 */
+    if (!g_file_get_contents(path, &content, &len, &error))
+    {
+        gchar *msg = g_strdup_printf("无法读取文件：%s",
+                                     error != NULL ? error->message
+                                                   : "未知错误");
+        show_text_content(self, msg, strlen(msg));
+        g_free(msg);
+        g_clear_error(&error);
+        return;
+    }
+
+    fmt = lr_format_detect_content(path, content, len);
     if (!lr_format_supported(fmt))
     {
-        show_text(self, path);
+        show_text_content(self, content, len);
+        g_free(content);
         return;
     }
 
     /* JSON：以树形列表展示 */
     if (fmt == LR_FORMAT_JSON)
     {
-        lr_value_pane_load_json(self, path);
+        lr_value_pane_load_json(self, content, len);
+        g_free(content);
         return;
     }
 
     {
-        LrConfigFile *file = lr_parse_config(path);
+        LrConfigFile *file = lr_parse_config_content(path, content, len);
         guint i;
 
         if (!file->parsed)
         {
-            show_text(self, path);
+            show_text_content(self, content, len);
+            g_free(content);
             lr_config_file_free(file);
             return;
         }
+        g_free(content);
 
         gtk_tree_store_clear(self->store);
 
@@ -523,14 +528,32 @@ void lr_value_pane_clear(LrValuePane *self)
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "empty");
 }
 
+/* 追加一列文本列：title 表头，col 模型列，expand 是否随宽度扩展，
+ * gray 是否灰色前景，min_width 最小宽度（0 表示不设） */
+static void
+append_text_column(GtkTreeView *view, const char *title, gint col,
+                   gboolean expand, gboolean gray, gint min_width)
+{
+    GtkTreeViewColumn *column = gtk_tree_view_column_new();
+    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+
+    gtk_tree_view_column_set_title(column, title);
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    if (gray)
+        g_object_set(renderer, "foreground", "gray", NULL);
+    gtk_tree_view_column_pack_start(column, renderer, expand);
+    gtk_tree_view_column_add_attribute(column, renderer, "text", col);
+    if (min_width > 0)
+        gtk_tree_view_column_set_min_width(column, min_width);
+    gtk_tree_view_append_column(view, column);
+}
+
 LrValuePane *
 lr_value_pane_new(void)
 {
     LrValuePane *self = g_new0(LrValuePane, 1);
     GtkWidget *scrolled;
     GtkWidget *label;
-    GtkCellRenderer *renderer;
-    GtkTreeViewColumn *column;
 
     self->widget = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
 
@@ -557,47 +580,11 @@ lr_value_pane_new(void)
     g_signal_connect(gtk_tree_view_get_selection(self->view), "changed",
                      G_CALLBACK(on_table_selection_changed), self);
 
-    column = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(column, "启用");
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    renderer = gtk_cell_renderer_text_new();
-    gtk_tree_view_column_pack_start(column, renderer, FALSE);
-    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_ENABLED);
-    gtk_tree_view_append_column(self->view, column);
-
-    column = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(column, "名称");
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    renderer = gtk_cell_renderer_text_new();
-    gtk_tree_view_column_pack_start(column, renderer, TRUE);
-    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_NAME);
-    gtk_tree_view_column_set_min_width(column, 160);
-    gtk_tree_view_append_column(self->view, column);
-
-    column = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(column, "类型");
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    renderer = gtk_cell_renderer_text_new();
-    gtk_tree_view_column_pack_start(column, renderer, FALSE);
-    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_TYPE);
-    gtk_tree_view_append_column(self->view, column);
-
-    column = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(column, "数据");
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    renderer = gtk_cell_renderer_text_new();
-    gtk_tree_view_column_pack_start(column, renderer, TRUE);
-    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_DATA);
-    gtk_tree_view_append_column(self->view, column);
-
-    column = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(column, "备注");
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    renderer = gtk_cell_renderer_text_new();
-    g_object_set(renderer, "foreground", "gray", NULL);
-    gtk_tree_view_column_pack_start(column, renderer, TRUE);
-    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_COMMENT);
-    gtk_tree_view_append_column(self->view, column);
+    append_text_column(self->view, "启用", COL_ENABLED, FALSE, FALSE, 0);
+    append_text_column(self->view, "名称", COL_NAME, TRUE, FALSE, 160);
+    append_text_column(self->view, "类型", COL_TYPE, FALSE, FALSE, 0);
+    append_text_column(self->view, "数据", COL_DATA, TRUE, FALSE, 0);
+    append_text_column(self->view, "备注", COL_COMMENT, TRUE, TRUE, 0);
 
     scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
@@ -632,29 +619,9 @@ lr_value_pane_new(void)
         GTK_TREE_MODEL(self->json_store)));
     g_object_unref(self->json_store);
 
-    column = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(column, "名称");
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    renderer = gtk_cell_renderer_text_new();
-    gtk_tree_view_column_pack_start(column, renderer, TRUE);
-    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_J_NAME);
-    gtk_tree_view_append_column(self->json_view, column);
-
-    column = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(column, "类型");
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    renderer = gtk_cell_renderer_text_new();
-    gtk_tree_view_column_pack_start(column, renderer, FALSE);
-    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_J_TYPE);
-    gtk_tree_view_append_column(self->json_view, column);
-
-    column = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(column, "数据");
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    renderer = gtk_cell_renderer_text_new();
-    gtk_tree_view_column_pack_start(column, renderer, TRUE);
-    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_J_DATA);
-    gtk_tree_view_append_column(self->json_view, column);
+    append_text_column(self->json_view, "名称", COL_J_NAME, TRUE, FALSE, 0);
+    append_text_column(self->json_view, "类型", COL_J_TYPE, FALSE, FALSE, 0);
+    append_text_column(self->json_view, "数据", COL_J_DATA, TRUE, FALSE, 0);
 
     scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),

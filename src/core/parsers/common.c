@@ -103,39 +103,54 @@ lr_split_key_value(const char *line, const char *delims,
     return TRUE;
 }
 
-/* 记录「上方最近的一条」注释说明：遇新注释替换，供下方多个配置项共用 */
-static void
-append_pending_comment(char **pending, const char *line)
+/* 判断注释行并更新「上方最近的一条」说明文字（# / ; / // 前缀） */
+gboolean
+lr_capture_comment(const char *line, char **pending)
 {
-    const char *p = line;
+    const char *p;
 
-    while (*p == '#' || *p == ';')
-        p++;
+    if (line[0] == '#')
+    {
+        p = line;
+        while (*p == '#')
+            p++;
+    }
+    else if (line[0] == ';')
+    {
+        p = line;
+        while (*p == ';')
+            p++;
+    }
+    else if (line[0] == '/' && line[1] == '/')
+    {
+        p = line + 2;
+    }
+    else
+    {
+        return FALSE;
+    }
+
     g_free(*pending);
     *pending = g_strstrip(g_strdup(p));
+    return TRUE;
 }
 
 gboolean
-lr_parse_section_kv(const char *path, LrConfigFile *file)
+lr_parse_section_kv(const char *content, gsize length, LrConfigFile *file)
 {
-    gchar *content = NULL;
-    gsize length = 0;
-    GError *error = NULL;
     gchar **lines = NULL;
     gchar **linep;
     char *section = NULL;
     char *pending_comment = NULL;
 
-    if (!g_file_get_contents(path, &content, &length, &error))
+    (void)length;
+    if (content == NULL)
     {
         file->parsed = FALSE;
-        file->error = g_strdup(error->message);
-        g_clear_error(&error);
         return FALSE;
     }
 
     lines = g_strsplit(content, "\n", -1);
-    g_free(content);
 
     for (linep = lines; linep != NULL && *linep != NULL; linep++)
     {
@@ -145,11 +160,8 @@ lr_parse_section_kv(const char *path, LrConfigFile *file)
             continue;
 
         /* 注释行 */
-        if (line[0] == '#' || line[0] == ';')
-        {
-            append_pending_comment(&pending_comment, line);
+        if (lr_capture_comment(line, &pending_comment))
             continue;
-        }
 
         /* 节 */
         if (line[0] == '[')

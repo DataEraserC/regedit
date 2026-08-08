@@ -25,52 +25,33 @@ has_systemd_extension(const char *path)
     return FALSE;
 }
 
-/* 读取文件头部（最多 max 字节）用于格式嗅探，失败返回 NULL */
-static char *
-read_head(const char *path, gsize max)
-{
-    gchar *content = NULL;
-    gsize length = 0;
-    GError *error = NULL;
+/* 嗅探最多读取的字节数：远超配置文件典型大小 */
+#define LR_SNIFF_MAX 65536
+/* 「关键字-参数」行中参数为多词（自然语言特征）的比例阈值，超过则视为普通文本 */
+#define LR_NATURAL_LANG_THRESHOLD 60
 
-    if (!g_file_get_contents(path, &content, &length, &error))
-    {
-        g_clear_error(&error);
-        return NULL;
-    }
-    if (length > max)
-    {
-        char *head = g_strndup(content, max);
-        g_free(content);
-        return head;
-    }
-    return content;
+/* 取内容前 max 字节用于嗅探（避免扫描超大非文本文件），返回新分配字符串 */
+static char *
+sniff_head(const char *content, gsize len, gsize max)
+{
+    return g_strndup(content, MIN(len, max));
 }
 
-/* 判断文件是否为合法 JSON 数组（[ 开头可能是 INI 节，需整体验证） */
+/* 判断文件内容是否为合法 JSON 数组（[ 开头可能是 INI 节，需整体验证） */
 static gboolean
-is_json_array(const char *path)
+is_json_array_content(const char *content, gsize len)
 {
-    gchar *content = NULL;
-    GError *error = NULL;
     JsonParser *parser;
     JsonNode *root;
     gboolean ok = FALSE;
 
-    if (!g_file_get_contents(path, &content, NULL, &error))
-    {
-        g_clear_error(&error);
-        return FALSE;
-    }
-
     parser = json_parser_new();
-    if (json_parser_load_from_data(parser, content, -1, NULL))
+    if (json_parser_load_from_data(parser, content, (gssize)len, NULL))
     {
         root = json_parser_get_root(parser);
         ok = root != NULL && JSON_NODE_TYPE(root) == JSON_NODE_ARRAY;
     }
     g_object_unref(parser);
-    g_free(content);
     return ok;
 }
 
@@ -94,24 +75,26 @@ is_keyword_line(const char *line)
 
 /* apt 配置特征：含 { } 嵌套块 + ; 结尾的赋值（Acquire::IndexTargets { ... };） */
 static gboolean
-is_apt_config(const char *head)
+is_apt_config(const char *content, gsize len)
 {
     gchar **lines, **lp;
     gboolean has_block = FALSE;
     gboolean has_semi = FALSE;
+    gchar *head = sniff_head(content, len, LR_SNIFF_MAX);
 
     lines = g_strsplit(head, "\n", -1);
+    g_free(head);
     for (lp = lines; lp != NULL && *lp != NULL; lp++)
     {
         gchar *l = g_strstrip(*lp);
-        gsize len;
+        gsize llen;
 
         if (*l == '\0' || l[0] == '#' || l[0] == '/')
             continue;
-        len = strlen(l);
-        if (len > 0 && l[len - 1] == '{')
+        llen = strlen(l);
+        if (llen > 0 && l[llen - 1] == '{')
             has_block = TRUE;
-        if (len > 0 && l[len - 1] == ';')
+        if (llen > 0 && l[llen - 1] == ';')
             has_semi = TRUE;
         if (strstr(l, "::") != NULL && strchr(l, '{') != NULL)
             has_block = TRUE;
@@ -120,177 +103,242 @@ is_apt_config(const char *head)
     return has_block && has_semi;
 }
 
-LrConfigFormat
-lr_format_detect(const char *path)
+/* 行特征统计：一次扫描收集 INI / KV / 关键字判定所需的所有特征 */
+typedef struct
 {
-    char *head;
-    gchar **lines, **linep;
-    gboolean has_section = FALSE;
-    gboolean has_kv = FALSE;
-    gboolean has_non_comment = FALSE;
-    gboolean keyword_style = TRUE;
-    guint keyword_lines = 0;         /* 匹配「关键字-参数」的行数 */
-    guint multiword_value_lines = 0; /* 其中参数为多词的行数 */
+    gboolean has_section;
+    gboolean has_kv;
+    gboolean has_non_comment;
+    gboolean keyword_style;
+    guint keyword_lines;
+    guint multiword_value_lines;
+} LineStats;
 
-    /* 1) systemd unit 扩展名最明确 */
-    if (has_systemd_extension(path))
-        return LR_FORMAT_SYSTEMD;
+static LineStats
+scan_stats(const char *content, gsize len)
+{
+    gchar **lines, **lp;
+    gchar *head = sniff_head(content, len, LR_SNIFF_MAX);
+    LineStats st;
 
-    /* 2) 依据内容嗅探（Linux 配置无法仅凭后缀判断） */
-    head = read_head(path, 65536);
-    if (head == NULL)
-        return LR_FORMAT_UNKNOWN;
-
-    /* 脚本解释器（shebang #!）：一律以文本形式打开，不做配置解析 */
-    if (g_str_has_prefix(head, "#!"))
-    {
-        g_free(head);
-        return LR_FORMAT_UNKNOWN;
-    }
-
-    /* JSON：内容以 { 开头 → JSON；以 [ 开头可能是 INI 节，
-     * 需验证整个文件是否为合法 JSON 数组 */
-    {
-        const char *p = head;
-        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
-            p++;
-        if (*p == '{')
-        {
-            g_free(head);
-            return LR_FORMAT_JSON;
-        }
-        if (*p == '[' && is_json_array(path))
-        {
-            g_free(head);
-            return LR_FORMAT_JSON;
-        }
-    }
-
-    /* apt：嵌套块（Key { ... }）+ 分号赋值 */
-    if (is_apt_config(head))
-    {
-        g_free(head);
-        return LR_FORMAT_APT;
-    }
+    memset(&st, 0, sizeof(st));
+    st.keyword_style = TRUE;
 
     lines = g_strsplit(head, "\n", -1);
     g_free(head);
 
-    for (linep = lines; linep != NULL && *linep != NULL; linep++)
+    for (lp = lines; lp != NULL && *lp != NULL; lp++)
     {
-        char *line = g_strstrip(*linep);
+        char *line = g_strstrip(*lp);
 
         if (*line == '\0' || line[0] == '#' || line[0] == ';')
             continue;
 
-        has_non_comment = TRUE;
+        st.has_non_comment = TRUE;
 
         if (line[0] == '[' && strchr(line, ']') != NULL)
         {
-            has_section = TRUE;
+            st.has_section = TRUE;
             continue;
         }
         if (strchr(line, '=') != NULL || strchr(line, ':') != NULL)
-            has_kv = TRUE;
+            st.has_kv = TRUE;
         if (is_keyword_line(line))
         {
-            /* 参数若含空白（多词），更像自然语言而非配置 */
             char *sp = strchr(line, ' ');
             if (sp == NULL)
                 sp = strchr(line, '\t');
             if (sp != NULL && (strchr(sp + 1, ' ') != NULL ||
                                strchr(sp + 1, '\t') != NULL))
-                multiword_value_lines++;
-            keyword_lines++;
+                st.multiword_value_lines++;
+            st.keyword_lines++;
         }
         else
         {
-            keyword_style = FALSE;
+            st.keyword_style = FALSE;
         }
     }
 
     g_strfreev(lines);
+    return st;
+}
 
-    if (has_section)
-        return LR_FORMAT_INI;
-    if (has_kv)
-        return LR_FORMAT_KV;
-    if (has_non_comment && keyword_style)
+/* ---- 各格式嗅探器（数组顺序即优先级） ---- */
+
+static gboolean
+sniff_systemd(const char *content, gsize len, const char *path)
+{
+    (void)content;
+    (void)len;
+    return has_systemd_extension(path);
+}
+
+static gboolean
+sniff_json(const char *content, gsize len, const char *path)
+{
+    const char *p = content;
+    (void)path;
+
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+        p++;
+    if (*p == '{')
+        return TRUE;
+    if (*p == '[')
+        return is_json_array_content(content, len);
+    return FALSE;
+}
+
+static gboolean
+sniff_apt(const char *content, gsize len, const char *path)
+{
+    (void)path;
+    return is_apt_config(content, len);
+}
+
+static gboolean
+sniff_ini(const char *content, gsize len, const char *path)
+{
+    (void)path;
+    return scan_stats(content, len).has_section;
+}
+
+static gboolean
+sniff_kv(const char *content, gsize len, const char *path)
+{
+    (void)path;
+    return scan_stats(content, len).has_kv;
+}
+
+static gboolean
+sniff_keyword(const char *content, gsize len, const char *path)
+{
+    LineStats st = scan_stats(content, len);
+    (void)path;
+
+    if (!st.has_non_comment || !st.keyword_style)
+        return FALSE;
+    /* 大多数「关键字-参数」行的参数为多词（自然语言特征，如 /etc/legal 的
+     * 英文说明），判定为普通文本而非配置 */
+    if (st.keyword_lines > 0 &&
+        st.multiword_value_lines * 100 / st.keyword_lines >
+            LR_NATURAL_LANG_THRESHOLD)
+        return FALSE;
+    return TRUE;
+}
+
+/* ---- 格式注册表：新增格式只需在此追加一个条目 ---- */
+typedef struct
+{
+    const char *name; /* 显示名 */
+    LrConfigFormat id;
+    gboolean (*sniff)(const char *content, gsize len, const char *path);
+    gboolean (*parse)(const char *content, gsize len, LrConfigFile *file);
+} LrFormatDriver;
+
+static const LrFormatDriver k_drivers[] = {
+    {"systemd unit", LR_FORMAT_SYSTEMD, sniff_systemd, lr_parse_systemd},
+    {"JSON", LR_FORMAT_JSON, sniff_json, lr_parse_json},
+    {"apt 配置", LR_FORMAT_APT, sniff_apt, lr_parse_apt},
+    {"INI", LR_FORMAT_INI, sniff_ini, lr_parse_ini},
+    {"键值对", LR_FORMAT_KV, sniff_kv, lr_parse_kv},
+    {"关键字-参数", LR_FORMAT_KEYWORD, sniff_keyword, lr_parse_keyword},
+};
+
+LrConfigFormat
+lr_format_detect_content(const char *path, const char *content, gsize len)
+{
+    guint i;
+
+    if (content == NULL)
+        return LR_FORMAT_UNKNOWN;
+
+    /* 脚本解释器（shebang #!）：一律以文本形式打开，不做配置解析 */
+    if (g_str_has_prefix(content, "#!"))
+        return LR_FORMAT_UNKNOWN;
+
+    for (i = 0; i < G_N_ELEMENTS(k_drivers); i++)
     {
-        /* 若大多数「关键字-参数」行的参数为多词（自然语言特征，如 /etc/legal
-         * 的英文说明），判定为普通文本而非配置 */
-        if (keyword_lines > 0 &&
-            multiword_value_lines * 100 / keyword_lines > 60)
-            return LR_FORMAT_UNKNOWN;
-        return LR_FORMAT_KEYWORD;
+        if (k_drivers[i].sniff(content, len, path))
+            return k_drivers[i].id;
     }
     return LR_FORMAT_UNKNOWN;
+}
+
+/* 兼容入口：按路径读取文件内容后检测（供测试与外部调用） */
+LrConfigFormat
+lr_format_detect(const char *path)
+{
+    gchar *content = NULL;
+    gsize len = 0;
+    LrConfigFormat fmt;
+
+    if (!g_file_get_contents(path, &content, &len, NULL))
+        return LR_FORMAT_UNKNOWN;
+    fmt = lr_format_detect_content(path, content, len);
+    g_free(content);
+    return fmt;
 }
 
 const char *
 lr_format_name(LrConfigFormat fmt)
 {
-    switch (fmt)
-    {
-    case LR_FORMAT_INI:
-        return "INI";
-    case LR_FORMAT_KV:
-        return "键值对";
-    case LR_FORMAT_SYSTEMD:
-        return "systemd unit";
-    case LR_FORMAT_KEYWORD:
-        return "关键字-参数";
-    case LR_FORMAT_JSON:
-        return "JSON";
-    case LR_FORMAT_APT:
-        return "apt 配置";
-    case LR_FORMAT_UNKNOWN:
-    default:
-        return "未知格式";
-    }
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS(k_drivers); i++)
+        if (k_drivers[i].id == fmt)
+            return k_drivers[i].name;
+    return "未知格式";
 }
 
 gboolean
 lr_format_supported(LrConfigFormat fmt)
 {
-    return fmt == LR_FORMAT_INI || fmt == LR_FORMAT_KV ||
-           fmt == LR_FORMAT_SYSTEMD || fmt == LR_FORMAT_KEYWORD ||
-           fmt == LR_FORMAT_JSON || fmt == LR_FORMAT_APT;
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS(k_drivers); i++)
+        if (k_drivers[i].id == fmt)
+            return TRUE;
+    return FALSE;
 }
 
 LrConfigFile *
-lr_parse_config(const char *path)
+lr_parse_config_content(const char *path, const char *content, gsize len)
 {
     LrConfigFile *file = lr_config_file_new(path);
-    LrConfigFormat fmt = lr_format_detect(path);
+    LrConfigFormat fmt = lr_format_detect_content(path, content, len);
+    guint i;
     gboolean ok = FALSE;
 
-    switch (fmt)
+    for (i = 0; i < G_N_ELEMENTS(k_drivers); i++)
     {
-    case LR_FORMAT_INI:
-        ok = lr_parse_ini(path, file);
-        break;
-    case LR_FORMAT_KV:
-        ok = lr_parse_kv(path, file);
-        break;
-    case LR_FORMAT_SYSTEMD:
-        ok = lr_parse_systemd(path, file);
-        break;
-    case LR_FORMAT_KEYWORD:
-        ok = lr_parse_keyword(path, file);
-        break;
-    case LR_FORMAT_JSON:
-        ok = lr_parse_json(path, file);
-        break;
-    case LR_FORMAT_APT:
-        ok = lr_parse_apt(path, file);
-        break;
-    default:
-        file->parsed = FALSE;
-        break;
+        if (k_drivers[i].id == fmt)
+        {
+            ok = k_drivers[i].parse(content, len, file);
+            break;
+        }
     }
-
     if (ok)
         file->parsed = TRUE;
     return file;
+}
+
+/* 兼容入口：按路径读取文件内容后解析（供测试与外部调用） */
+LrConfigFile *
+lr_parse_config(const char *path)
+{
+    gchar *content = NULL;
+    gsize len = 0;
+
+    if (!g_file_get_contents(path, &content, &len, NULL))
+    {
+        LrConfigFile *file = lr_config_file_new(path);
+        file->parsed = FALSE;
+        return file;
+    }
+
+    {
+        LrConfigFile *file = lr_parse_config_content(path, content, len);
+        g_free(content);
+        return file;
+    }
 }

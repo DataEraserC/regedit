@@ -4,6 +4,11 @@
 #include <glib/gstdio.h>
 #include <string.h>
 
+/* 目录树中视为过大的文件大小阈值（超过则不显示） */
+#define LR_MAX_FILE_SIZE (128 * 1024)
+/* 判断文本文件时探测的字节数 */
+#define LR_TEXT_PROBE_SIZE 1024
+
 void lr_scan_entry_free(LrScanEntry *entry)
 {
     if (entry == NULL)
@@ -26,7 +31,7 @@ compare_entries(gconstpointer a, gconstpointer b)
     return g_ascii_strcasecmp(ea->name, eb->name);
 }
 
-/* 文件大小超过 128KB 则跳过 */
+/* 文件大小超过阈值则跳过 */
 static gboolean
 is_oversized(const char *path)
 {
@@ -34,16 +39,16 @@ is_oversized(const char *path)
 
     if (g_stat(path, &st) != 0)
         return FALSE;
-    return st.st_size > 128 * 1024;
+    return st.st_size > LR_MAX_FILE_SIZE;
 }
 
-/* 判断是否为文本文件：读取前 1024 字节，含 NUL 视为非文本 */
+/* 判断是否为文本文件：读取前 LR_TEXT_PROBE_SIZE 字节，含 NUL 视为非文本 */
 static gboolean
 is_text_file(const char *path)
 {
     GFile *file;
     GFileInputStream *stream;
-    guchar buf[1024];
+    guchar buf[LR_TEXT_PROBE_SIZE];
     gsize n = 0;
     gboolean text = TRUE;
     GError *error = NULL;

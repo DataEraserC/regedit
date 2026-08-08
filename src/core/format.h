@@ -19,6 +19,10 @@ typedef enum
 /* 根据文件名与文件内容启发式判断格式 */
 LrConfigFormat lr_format_detect(const char *path);
 
+/* 基于已读取的内容检测格式（避免重复读文件） */
+LrConfigFormat lr_format_detect_content(const char *path,
+                                        const char *content, gsize len);
+
 /* 格式的中文显示名 */
 const char *lr_format_name(LrConfigFormat fmt);
 
@@ -27,5 +31,9 @@ gboolean lr_format_supported(LrConfigFormat fmt);
 
 /* 解析入口：检测格式并调用对应解析器，返回解析后的文件（调用方释放） */
 LrConfigFile *lr_parse_config(const char *path);
+
+/* 基于已读取的内容解析（避免重复读文件），调用方释放返回的 file */
+LrConfigFile *lr_parse_config_content(const char *path,
+                                      const char *content, gsize len);
 
 #endif /* LR_CORE_FORMAT_H */
