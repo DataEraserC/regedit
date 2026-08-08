@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include "core/parsers/ini.h"
+#include "core/parsers/json.h"
 #include "core/parsers/keyword.h"
 #include "core/parsers/kv.h"
 #include "core/parsers/systemd.h"
@@ -90,6 +91,18 @@ lr_format_detect(const char *path)
         return LR_FORMAT_UNKNOWN;
     }
 
+    /* JSON：内容以 { 或 [ 开头（去除前导空白） */
+    {
+        const char *p = head;
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+            p++;
+        if (*p == '{' || *p == '[')
+        {
+            g_free(head);
+            return LR_FORMAT_JSON;
+        }
+    }
+
     lines = g_strsplit(head, "\n", -1);
     g_free(head);
 
@@ -157,6 +170,8 @@ lr_format_name(LrConfigFormat fmt)
         return "systemd unit";
     case LR_FORMAT_KEYWORD:
         return "关键字-参数";
+    case LR_FORMAT_JSON:
+        return "JSON";
     case LR_FORMAT_UNKNOWN:
     default:
         return "未知格式";
@@ -167,7 +182,8 @@ gboolean
 lr_format_supported(LrConfigFormat fmt)
 {
     return fmt == LR_FORMAT_INI || fmt == LR_FORMAT_KV ||
-           fmt == LR_FORMAT_SYSTEMD || fmt == LR_FORMAT_KEYWORD;
+           fmt == LR_FORMAT_SYSTEMD || fmt == LR_FORMAT_KEYWORD ||
+           fmt == LR_FORMAT_JSON;
 }
 
 LrConfigFile *
@@ -190,6 +206,9 @@ lr_parse_config(const char *path)
         break;
     case LR_FORMAT_KEYWORD:
         ok = lr_parse_keyword(path, file);
+        break;
+    case LR_FORMAT_JSON:
+        ok = lr_parse_json(path, file);
         break;
     default:
         file->parsed = FALSE;

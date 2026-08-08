@@ -15,4 +15,7 @@ void lr_main_window_free(LrMainWindow *self);
 /* 从 /run 会话状态恢复窗口大小、位置与上次路径 */
 void lr_main_window_restore_state(LrMainWindow *self);
 
+/* 直接打开指定文件（或定位到目录）：供命令行 / 外部调用 */
+void lr_main_window_open_file(LrMainWindow *self, const char *path);
+
 #endif /* LR_UI_MAIN_WINDOW_H */

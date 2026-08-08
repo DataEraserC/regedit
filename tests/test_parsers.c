@@ -218,4 +218,25 @@ void test_parsers(void)
         g_unlink(p);
         g_free(p);
     }
+
+    /* ---------- JSON：识别与解析 ---------- */
+    {
+        gchar *p = write_tmp("lr-test-8.json",
+                             "{\n"
+                             "  \"name\": \"linux-regedit\",\n"
+                             "  \"version\": 1,\n"
+                             "  \"enabled\": true,\n"
+                             "  \"tags\": [\"a\", \"b\"],\n"
+                             "  \"window\": {\"width\": 800, \"height\": 600}\n"
+                             "}\n");
+        LrConfigFile *f = lr_parse_config(p);
+
+        TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_JSON);
+        TEST_ASSERT(lr_format_supported(LR_FORMAT_JSON));
+        TEST_ASSERT(f->parsed);
+
+        lr_config_file_free(f);
+        g_unlink(p);
+        g_free(p);
+    }
 }

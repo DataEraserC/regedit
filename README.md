@@ -29,6 +29,8 @@
 - 💬 **备注列**：每个配置项显示**上方最近的一条注释**，一条注释可说明其下方多个配置项。
 - 📖 **man 说明面板**：选中配置项时，底部面板查询 `man 5 <配置文件>` 并只显示该配置项的说明段落；未选中时面板自动隐藏。
 - 📝 **文本兜底**：不支持的格式、以及以 shebang（`#!`）开头的脚本，均以纯文本视图打开。
+- 🌲 **JSON 树形视图**：内容以 `{` / `[` 开头的文件按 **JSON** 识别，以可展开的树形列表展示（对象/数组/数字/字符串/布尔/空值类型区分，数组元素带 `[下标]` 索引）。
+- 🚀 **命令行打开文件**：`linux-regedit /path/to/file` 启动后直接定位到该文件并展示（树中自动逐级展开选中）。
 - 🧹 **目录树过滤**：大于 128KB 的文件、非文本（二进制）文件、空文件夹不在树中显示。
 - 🖱️ **交互细节**：双击目录展开/收起；树节点右键菜单（展开/折叠、复制项名称等）；表格各列可拖拽调节宽度；地址栏实时显示当前路径并可输入路径跳转。
 - 🎨 **regedit 风格界面**：五个菜单（文件 / 编辑 / 查看 / 收藏夹 / 帮助）、地址栏、左右分栏 + 底部说明面板。
@@ -72,6 +74,9 @@
 | **扁平 KeyValue** | `key=value` / `key value`，无分节 | `/etc/environment` 等 |
 | **systemd unit** | `[Unit]/[Service]` 等节 + `Key=Value` | `/etc/systemd/system/` |
 | **关键字-参数** | `关键字 参数`（空白/Tab 分隔），如 sshd_config | `/etc/ssh/sshd_config` |
+| **JSON** | 以 `{` / `[` 开头；以可展开树形列表展示，不解析为配置行 | `~/.config/**/*.json` |
+
+> JSON 采用树形视图（对象/数组/标量类型区分），不属于「一行一条配置」的列表风格，因此不使用启用/备注列。
 
 > 识别到 `#Port 22` 这类被注释的配置时，会以「未启用」项展示；说明文字（长句）注释忽略。
 
@@ -85,6 +90,7 @@
 | `"..."` 或普通文本 | 字符串 | `String` | `REG_SZ` |
 | `true/false`、`yes/no`、`on/off`、`1/0` | 布尔值 | `Boolean` | `REG_DWORD (0/1)` |
 | `# ...` / `; ...` | 注释 | 备注列 | 上方最近一条注释 |
+| JSON 值 | 对象 / 数组 / 数字 / 字符串 / 布尔 / 空 | `Object` / `Array` / `Number` / `String` / `Boolean` / `Null` | — |
 
 ---
 
@@ -94,15 +100,16 @@
 
 - **GTK3**（`libgtk-3-dev`）
 - **GLib / GIO**（通常随 GTK3 一并安装）
+- **json-glib**（`libjson-glib-dev`，用于 JSON 解析）
 - **Meson** ≥ 0.60 与 **Ninja**
 
 Debian / Ubuntu（有管理员权限）：
 
 ```bash
-sudo apt install build-essential libgtk-3-dev meson ninja-build
+sudo apt install build-essential libgtk-3-dev libjson-glib-dev meson ninja-build
 ```
 
-无管理员权限时，可将 Meson / Ninja 安装到用户目录（如 `~/.local/bin`），并确保其加入 `PATH`。
+无管理员权限时，可将 Meson / Ninja 安装到用户目录（如 `~/.local/bin`），并确保其加入 `PATH`；json-glib 同样可下载 `libjson-glib-dev` 的 `.deb` 后解压到 `~/.local/usr`（构建脚本会自动回退到该路径）。
 
 ### 编译
 
@@ -114,7 +121,8 @@ meson compile -C builddir
 ### 运行
 
 ```bash
-./builddir/linux-regedit
+./builddir/linux-regedit            # 浏览 /etc 与 ~/.config
+./builddir/linux-regedit 路径/文件   # 启动并直接打开指定文件
 ```
 
 ### 测试
@@ -161,9 +169,10 @@ linux-regedit/
 - [x] v0.2：`关键字-参数` 格式（sshd_config）、基于内容的格式嗅探
 - [x] v0.2：备注「上方最近一条」、启用列、被注释配置识别
 - [x] v0.2：man 说明面板、目录树过滤（超大/非文本/空目录）、shebang 文本兜底
+- [x] v0.3：`JSON` 结构化格式支持（树形可展开列表）
 - [ ] v0.3：搜索 / 过滤、类型强制显示
 - [ ] v0.4：编辑配置并**写回文件**（含权限处理与安全校验），支持 `sudo` 提权流程
-- [ ] v0.5：`JSON`、`TOML` 结构化格式支持
+- [ ] v0.5：`TOML` 结构化格式支持
 - [ ] v0.6：对比 / 导出 / 备份等增强工具
 
 ---

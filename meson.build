@@ -8,6 +8,19 @@ glibdep = dependency('glib-2.0')
 giodep = dependency('gio-2.0')
 gtkdep = dependency('gtk+-3.0')
 
+# json-glib：优先 pkg-config；无系统权限时回退到用户目录安装（~/.local/usr）
+jsondep = dependency('json-glib-1.0', required: false)
+if not jsondep.found()
+  home_dir = run_command('sh', '-c', 'echo "$HOME"',
+                         check: false).stdout().strip()
+  jsondep = declare_dependency(
+    include_directories: include_directories(
+      home_dir + '/.local/usr/include/json-glib-1.0'),
+    link_args: ['-L' + home_dir + '/.local/usr/lib/x86_64-linux-gnu',
+                '-ljson-glib-1.0'],
+  )
+endif
+
 # 核心库：纯 GLib，不含 UI，便于单元测试
 lr_core_sources = files(
   'src/core/value.c',
@@ -18,12 +31,13 @@ lr_core_sources = files(
   'src/core/parsers/kv.c',
   'src/core/parsers/systemd.c',
   'src/core/parsers/keyword.c',
+  'src/core/parsers/json.c',
 )
 
 lr_core_inc = include_directories('src')
 
 lr_core = static_library('lr_core', lr_core_sources,
-  dependencies: [glibdep, giodep],
+  dependencies: [glibdep, giodep, jsondep],
   include_directories: lr_core_inc,
 )
 
@@ -35,7 +49,7 @@ executable('linux-regedit',
   'src/ui/tree_pane.c',
   'src/ui/value_pane.c',
   link_with: lr_core,
-  dependencies: [gtkdep, giodep],
+  dependencies: [gtkdep, giodep, jsondep],
   include_directories: lr_core_inc,
   install: true,
 )
@@ -48,7 +62,7 @@ if get_option('tests')
     'tests/test_scanner.c',
     'tests/test_runner.c',
     link_with: lr_core,
-    dependencies: [glibdep, giodep],
+    dependencies: [glibdep, giodep, jsondep],
     include_directories: [lr_core_inc, include_directories('tests')],
   )
   test('core-tests', test_runner)

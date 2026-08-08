@@ -1,6 +1,8 @@
 #include "ui/value_pane.h"
 #include "core/format.h"
 
+#include <json-glib/json-glib.h>
+
 /* 底部 man 说明面板的固定高度（像素） */
 #define LR_INFO_HEIGHT 200
 
@@ -12,6 +14,15 @@ enum
     COL_DATA,
     COL_COMMENT,
     N_COLS
+};
+
+/* JSON 树形列表的列 */
+enum
+{
+    COL_J_NAME = 0,
+    COL_J_TYPE,
+    COL_J_DATA,
+    COL_J_N
 };
 
 struct _LrValuePane
@@ -26,6 +37,9 @@ struct _LrValuePane
     GtkLabel *info_title;   /* 底部说明面板标题 */
     GtkTextView *info_text; /* 底部说明面板内容 */
     GtkWidget *info_page;   /* 底部说明面板容器 */
+    GtkWidget *json_page;   /* JSON 树形页 */
+    GtkTreeView *json_view;
+    GtkTreeStore *json_store;
     char *current_basename; /* 当前配置文件 basename（用于 man 5 查询） */
     char *current_name;     /* 当前选中配置项名（用于过滤段落） */
 };
@@ -237,6 +251,151 @@ show_text(LrValuePane *self, const char *path)
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "text");
 }
 
+/* 递归将 JSON 节点加入树形列表 */
+static void
+add_json_node(LrValuePane *self, JsonNode *node, const char *key,
+              GtkTreeIter *parent)
+{
+    JsonNodeType type = JSON_NODE_TYPE(node);
+    GtkTreeIter iter;
+
+    if (type == JSON_NODE_OBJECT)
+    {
+        GtkTreeIter *container = parent;
+        GtkTreeIter obj_iter;
+        JsonObject *obj;
+        GList *members, *l;
+
+        if (key != NULL)
+        {
+            gtk_tree_store_append(self->json_store, &obj_iter, parent);
+            gtk_tree_store_set(self->json_store, &obj_iter,
+                               COL_J_NAME, key,
+                               COL_J_TYPE, "Object",
+                               COL_J_DATA, "",
+                               -1);
+            container = &obj_iter;
+        }
+
+        obj = json_node_get_object(node);
+        members = json_object_get_members(obj);
+        for (l = members; l != NULL; l = l->next)
+        {
+            const char *mkey = l->data;
+            add_json_node(self, json_object_get_member(obj, mkey), mkey,
+                          container);
+        }
+        g_list_free(members);
+        return;
+    }
+
+    if (type == JSON_NODE_ARRAY)
+    {
+        JsonArray *arr = json_node_get_array(node);
+        guint len = json_array_get_length(arr);
+        guint i;
+        gchar *label = g_strdup_printf("%s[Array]",
+                                       key != NULL ? key : "root");
+
+        gtk_tree_store_append(self->json_store, &iter, parent);
+        gtk_tree_store_set(self->json_store, &iter,
+                           COL_J_NAME, label,
+                           COL_J_TYPE, "Array",
+                           COL_J_DATA, "",
+                           -1);
+        g_free(label);
+
+        for (i = 0; i < len; i++)
+        {
+            gchar *ikey = g_strdup_printf("[%u]", i);
+            add_json_node(self, json_array_get_element(arr, i), ikey, &iter);
+            g_free(ikey);
+        }
+        return;
+    }
+
+    /* 标量值（json-glib 1.10 直接在 JsonNode 上取值） */
+    {
+        const char *type_name = "";
+        gchar *data = g_strdup("");
+
+        if (type == JSON_NODE_VALUE)
+        {
+            GType vtype = json_node_get_value_type(node);
+
+            if (json_node_is_null(node))
+            {
+                type_name = "Null";
+                g_free(data);
+                data = g_strdup("null");
+            }
+            else if (vtype == G_TYPE_BOOLEAN)
+            {
+                type_name = "Boolean";
+                g_free(data);
+                data = g_strdup(json_node_get_boolean(node) ? "true" : "false");
+            }
+            else if (vtype == G_TYPE_INT64 || vtype == G_TYPE_INT)
+            {
+                type_name = "Number";
+                g_free(data);
+                data = g_strdup_printf("%" G_GINT64_FORMAT,
+                                       json_node_get_int(node));
+            }
+            else if (vtype == G_TYPE_DOUBLE)
+            {
+                type_name = "Number";
+                g_free(data);
+                data = g_strdup_printf("%g", json_node_get_double(node));
+            }
+            else
+            {
+                type_name = "String";
+                g_free(data);
+                data = g_strdup(json_node_get_string(node) != NULL
+                                    ? json_node_get_string(node)
+                                    : "");
+            }
+        }
+
+        gtk_tree_store_append(self->json_store, &iter, parent);
+        gtk_tree_store_set(self->json_store, &iter,
+                           COL_J_NAME, key != NULL ? key : "",
+                           COL_J_TYPE, type_name,
+                           COL_J_DATA, data,
+                           -1);
+        g_free(data);
+    }
+}
+
+static void
+lr_value_pane_load_json(LrValuePane *self, const char *path)
+{
+    JsonParser *parser = json_parser_new();
+    GError *error = NULL;
+    gchar *content = NULL;
+
+    gtk_tree_store_clear(self->json_store);
+
+    if (g_file_get_contents(path, &content, NULL, NULL) &&
+        json_parser_load_from_data(parser, content, -1, &error))
+    {
+        JsonNode *root = json_parser_get_root(parser);
+        gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "json");
+        add_json_node(self, root, NULL, NULL);
+        gtk_tree_view_expand_all(self->json_view);
+    }
+    else
+    {
+        show_text(self, path);
+    }
+
+    if (error != NULL)
+        g_error_free(error);
+    g_free(content);
+    g_object_unref(parser);
+}
+
 void lr_value_pane_load_file(LrValuePane *self, const char *path)
 {
     LrConfigFormat fmt = lr_format_detect(path);
@@ -247,6 +406,13 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
     if (!lr_format_supported(fmt))
     {
         show_text(self, path);
+        return;
+    }
+
+    /* JSON：以树形列表展示 */
+    if (fmt == LR_FORMAT_JSON)
+    {
+        lr_value_pane_load_json(self, path);
         return;
     }
 
@@ -285,6 +451,7 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
 void lr_value_pane_clear(LrValuePane *self)
 {
     gtk_list_store_clear(self->store);
+    gtk_tree_store_clear(self->json_store);
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "empty");
 }
 
@@ -387,6 +554,47 @@ lr_value_pane_new(void)
     gtk_container_add(GTK_CONTAINER(scrolled), GTK_WIDGET(self->text));
     gtk_box_pack_start(GTK_BOX(self->text_page), scrolled, TRUE, TRUE, 0);
     gtk_stack_add_named(GTK_STACK(self->stack), self->text_page, "text");
+
+    /* --- JSON 页（树形列表，可展开；无启用/备注列） --- */
+    self->json_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+
+    self->json_store = gtk_tree_store_new(COL_J_N, G_TYPE_STRING,
+                                          G_TYPE_STRING, G_TYPE_STRING);
+    self->json_view = GTK_TREE_VIEW(gtk_tree_view_new_with_model(
+        GTK_TREE_MODEL(self->json_store)));
+    g_object_unref(self->json_store);
+
+    column = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(column, "名称");
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    renderer = gtk_cell_renderer_text_new();
+    gtk_tree_view_column_pack_start(column, renderer, TRUE);
+    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_J_NAME);
+    gtk_tree_view_append_column(self->json_view, column);
+
+    column = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(column, "类型");
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    renderer = gtk_cell_renderer_text_new();
+    gtk_tree_view_column_pack_start(column, renderer, FALSE);
+    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_J_TYPE);
+    gtk_tree_view_append_column(self->json_view, column);
+
+    column = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(column, "数据");
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    renderer = gtk_cell_renderer_text_new();
+    gtk_tree_view_column_pack_start(column, renderer, TRUE);
+    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_J_DATA);
+    gtk_tree_view_append_column(self->json_view, column);
+
+    scrolled = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
+                                   GTK_POLICY_AUTOMATIC,
+                                   GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(scrolled), GTK_WIDGET(self->json_view));
+    gtk_box_pack_start(GTK_BOX(self->json_page), scrolled, TRUE, TRUE, 0);
+    gtk_stack_add_named(GTK_STACK(self->stack), self->json_page, "json");
 
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "empty");
 
