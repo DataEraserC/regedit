@@ -57,13 +57,13 @@ add_dummy_child(LrTreePane *self, GtkTreeIter *parent)
                        -1);
 }
 
-/* 计算机虚拟根：下挂 /etc 与 ~/.config 两个真实根（类比注册表根键） */
+/* 计算机虚拟根：下挂系统/用户配置根（类比注册表根键） */
 static void
 add_computer_root(LrTreePane *self)
 {
     const gchar *home = g_get_home_dir();
     gchar *config = g_build_filename(home, ".config", NULL);
-    GtkTreeIter computer, etc, user;
+    GtkTreeIter computer, etc, user, boot;
 
     gtk_tree_store_append(self->store, &computer, NULL);
     gtk_tree_store_set(self->store, &computer,
@@ -98,6 +98,18 @@ add_computer_root(LrTreePane *self)
                        COL_LOADED, FALSE,
                        -1);
     add_dummy_child(self, &user);
+
+    /* HKEY_SYSTEM_BOOT —— 引导目录，对应 /boot */
+    gtk_tree_store_append(self->store, &boot, &computer);
+    gtk_tree_store_set(self->store, &boot,
+                       COL_ICON, self->icon_folder,
+                       COL_NAME, "HKEY_SYSTEM_BOOT",
+                       COL_PATH, "/boot",
+                       COL_KIND, LR_SCAN_DIR,
+                       COL_FORMAT, LR_FORMAT_UNKNOWN,
+                       COL_LOADED, FALSE,
+                       -1);
+    add_dummy_child(self, &boot);
 
     g_free(config);
 }
