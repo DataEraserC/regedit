@@ -7,6 +7,7 @@
 #include "core/parsers/keyword.h"
 #include "core/parsers/kv.h"
 #include "core/parsers/systemd.h"
+#include "core/parsers/apt.h"
 
 static gboolean
 has_systemd_extension(const char *path)
@@ -91,6 +92,34 @@ is_keyword_line(const char *line)
     return *p != '\0';
 }
 
+/* apt 配置特征：含 { } 嵌套块 + ; 结尾的赋值（Acquire::IndexTargets { ... };） */
+static gboolean
+is_apt_config(const char *head)
+{
+    gchar **lines, **lp;
+    gboolean has_block = FALSE;
+    gboolean has_semi = FALSE;
+
+    lines = g_strsplit(head, "\n", -1);
+    for (lp = lines; lp != NULL && *lp != NULL; lp++)
+    {
+        gchar *l = g_strstrip(*lp);
+        gsize len;
+
+        if (*l == '\0' || l[0] == '#' || l[0] == '/')
+            continue;
+        len = strlen(l);
+        if (len > 0 && l[len - 1] == '{')
+            has_block = TRUE;
+        if (len > 0 && l[len - 1] == ';')
+            has_semi = TRUE;
+        if (strstr(l, "::") != NULL && strchr(l, '{') != NULL)
+            has_block = TRUE;
+    }
+    g_strfreev(lines);
+    return has_block && has_semi;
+}
+
 LrConfigFormat
 lr_format_detect(const char *path)
 {
@@ -135,6 +164,13 @@ lr_format_detect(const char *path)
             g_free(head);
             return LR_FORMAT_JSON;
         }
+    }
+
+    /* apt：嵌套块（Key { ... }）+ 分号赋值 */
+    if (is_apt_config(head))
+    {
+        g_free(head);
+        return LR_FORMAT_APT;
     }
 
     lines = g_strsplit(head, "\n", -1);
@@ -206,6 +242,8 @@ lr_format_name(LrConfigFormat fmt)
         return "关键字-参数";
     case LR_FORMAT_JSON:
         return "JSON";
+    case LR_FORMAT_APT:
+        return "apt 配置";
     case LR_FORMAT_UNKNOWN:
     default:
         return "未知格式";
@@ -217,7 +255,7 @@ lr_format_supported(LrConfigFormat fmt)
 {
     return fmt == LR_FORMAT_INI || fmt == LR_FORMAT_KV ||
            fmt == LR_FORMAT_SYSTEMD || fmt == LR_FORMAT_KEYWORD ||
-           fmt == LR_FORMAT_JSON;
+           fmt == LR_FORMAT_JSON || fmt == LR_FORMAT_APT;
 }
 
 LrConfigFile *
@@ -243,6 +281,9 @@ lr_parse_config(const char *path)
         break;
     case LR_FORMAT_JSON:
         ok = lr_parse_json(path, file);
+        break;
+    case LR_FORMAT_APT:
+        ok = lr_parse_apt(path, file);
         break;
     default:
         file->parsed = FALSE;

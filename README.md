@@ -20,7 +20,7 @@
 ## ✨ 特性
 
 - 🗂️ **「计算机」根 + 三个根键**：`HKEY_LOCAL_MACHINE`(`/etc`)、`HKEY_CURRENT_USER`(`~/.config`)、`HKEY_SYSTEM_BOOT`(`/boot`)，左侧树懒加载展示目录结构，同级目录以虚线连接。
-- 🔍 **基于内容嗅探的格式识别**：Linux 配置无法仅凭后缀判断，程序读取文件内容猜测格式——`systemd 扩展名 → INI 节 → key=value → 关键字-参数 → 未知`；`{` 开头判定为 JSON，`[` 开头需验证为合法 JSON 数组（否则按 INI 节处理）。
+- 🔍 **基于内容嗅探的格式识别**：Linux 配置无法仅凭后缀判断，程序读取文件内容猜测格式——`systemd 扩展名 → JSON → apt 嵌套块 → INI 节 → key=value → 关键字-参数 → 未知`；`{` 开头判定为 JSON，`[` 开头需验证为合法 JSON 数组（否则按 INI 节处理）。
 - 🧮 **智能类型识别**：自动区分配置值的类型——
   - `Number`（整数 / 浮点 / 十六进制，类比 `REG_DWORD`）
   - `String`（类比 `REG_SZ`）
@@ -76,8 +76,11 @@
 | **systemd unit** | `[Unit]/[Service]` 等节 + `Key=Value` | `/etc/systemd/system/` |
 | **关键字-参数** | `关键字 参数`（空白/Tab 分隔），如 sshd_config | `/etc/ssh/sshd_config` |
 | **JSON** | 以 `{` / `[` 开头；以可展开树形列表展示，不解析为配置行 | `~/.config/**/*.json` |
+| **apt 配置** | 嵌套块 `Key { ... }` + `::` 命名空间键 + `;` 赋值；按路径逐级可展开 | `/etc/apt/apt.conf.d/` |
 
 > JSON 采用树形视图（对象/数组/标量类型区分），不属于「一行一条配置」的列表风格，因此不使用启用/备注列。
+
+> apt 配置的嵌套块（如 `Acquire::IndexTargets { deb::DEP-11 { ... } }`）按 `::` 路径逐级显示为可展开的行；列表值 `Key { "..."; }` 以 `[n]` 索引项展示。
 
 > 识别到 `#Port 22` 这类被注释的配置时，会以「未启用」项展示；说明文字（长句）注释忽略。
 
@@ -161,7 +164,8 @@ linux-regedit/
 │   │       ├── kv.c/h       # 扁平 key=value 解析器
 │   │       ├── systemd.c/h  # systemd unit 解析器
 │   │       ├── keyword.c/h  # 关键字-参数解析器（sshd_config）
-│   │       └── json.c/h     # JSON 解析器（json-glib，树形展示）
+│   │       ├── json.c/h     # JSON 解析器（json-glib，树形展示）
+│   │       └── apt.c/h      # apt 配置解析器（嵌套块 + :: 路径）
 ├── testdata/             # 各格式真实示例文件（单元测试 + 手动 GUI 验证）
 └── tests/                # 单元测试（类型识别 / 解析器 / 目录扫描过滤）
 ```

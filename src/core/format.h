@@ -13,6 +13,7 @@ typedef enum
     LR_FORMAT_SYSTEMD,     /* systemd unit 文件 */
     LR_FORMAT_KEYWORD,     /* 关键字-参数（空白分隔），如 sshd_config */
     LR_FORMAT_JSON,        /* JSON（嵌套结构，树形展示） */
+    LR_FORMAT_APT,         /* apt 配置（嵌套块 + :: 键，树形展示） */
 } LrConfigFormat;
 
 /* 根据文件名与文件内容启发式判断格式 */

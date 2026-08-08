@@ -1,6 +1,7 @@
 #include "ui/value_pane.h"
 #include "core/format.h"
 
+#include <string.h>
 #include <json-glib/json-glib.h>
 
 /* 底部 man 说明面板的固定高度（像素） */
@@ -436,9 +437,10 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
 
         gtk_tree_store_clear(self->store);
 
-        /* 按节分组：每个节一个可展开的父行（如 [server]） */
+        /* 按节路径（:: 分隔）逐级创建可展开节点：
+         * INI/systemd 单段节 → [节名]；apt 嵌套路径 → 每段一个节点 */
         {
-            GHashTable *sections = g_hash_table_new_full(
+            GHashTable *nodes = g_hash_table_new_full(
                 g_str_hash, g_str_equal, g_free, g_free);
 
             for (i = 0; i < file->items->len; i++)
@@ -449,25 +451,47 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
 
                 if (item->section != NULL && *item->section != '\0')
                 {
-                    parent = g_hash_table_lookup(sections, item->section);
-                    if (parent == NULL)
+                    gchar **segs = g_strsplit(item->section, "::", -1);
+                    gboolean multi = strstr(item->section, "::") != NULL;
+                    GString *cur = g_string_new(NULL);
+                    guint j;
+
+                    for (j = 0; segs[j] != NULL; j++)
                     {
-                        GtkTreeIter sit;
-                        gchar *sname =
-                            g_strdup_printf("[%s]", item->section);
-                        gtk_tree_store_append(self->store, &sit, NULL);
-                        gtk_tree_store_set(self->store, &sit,
-                                           COL_ENABLED, "",
-                                           COL_NAME, sname,
-                                           COL_TYPE, "Section",
-                                           COL_DATA, "",
-                                           COL_COMMENT, "",
-                                           -1);
-                        g_free(sname);
-                        parent = g_memdup2(&sit, sizeof(GtkTreeIter));
-                        g_hash_table_insert(sections,
-                                            g_strdup(item->section), parent);
+                        gchar *seg = g_strstrip(segs[j]);
+                        GtkTreeIter *node;
+                        gchar *display;
+
+                        if (*seg == '\0')
+                            continue;
+                        if (cur->len > 0)
+                            g_string_append(cur, "::");
+                        g_string_append(cur, seg);
+
+                        display = multi
+                                      ? g_strdup(seg)
+                                      : g_strdup_printf("[%s]", seg);
+                        node = g_hash_table_lookup(nodes, cur->str);
+                        if (node == NULL)
+                        {
+                            GtkTreeIter sit;
+                            gtk_tree_store_append(self->store, &sit, parent);
+                            gtk_tree_store_set(self->store, &sit,
+                                               COL_ENABLED, "",
+                                               COL_NAME, display,
+                                               COL_TYPE, "Section",
+                                               COL_DATA, "",
+                                               COL_COMMENT, "",
+                                               -1);
+                            node = g_memdup2(&sit, sizeof(GtkTreeIter));
+                            g_hash_table_insert(nodes, g_strdup(cur->str),
+                                                node);
+                        }
+                        parent = node;
+                        g_free(display);
                     }
+                    g_strfreev(segs);
+                    g_string_free(cur, TRUE);
                 }
 
                 gtk_tree_store_append(self->store, &iter, parent);
@@ -481,7 +505,7 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
                                    -1);
             }
 
-            g_hash_table_destroy(sections);
+            g_hash_table_destroy(nodes);
         }
 
         /* 默认展开所有节 */

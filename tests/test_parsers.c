@@ -418,5 +418,44 @@ void test_parsers(void)
             lr_config_file_free(f);
             g_free(p);
         }
+
+        /* apt 配置：嵌套块 + :: 路径 + 列表值 */
+        {
+            gchar *p = g_build_filename(td, "sample-apt.conf", NULL);
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_APT);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 8);
+
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->key, "MetaKey");
+            TEST_ASSERT_STR_EQ(it->section,
+                               "Acquire::IndexTargets::deb::DEP-11");
+
+            it = g_ptr_array_index(f->items, 2);
+            TEST_ASSERT_STR_EQ(it->key, "KeepCompressed");
+            TEST_ASSERT(it->type == LR_VALUE_BOOL);
+
+            it = g_ptr_array_index(f->items, 4);
+            TEST_ASSERT_STR_EQ(it->section,
+                               "Acquire::IndexTargets::deb::DEP-11-icons");
+
+            it = g_ptr_array_index(f->items, 6);
+            TEST_ASSERT_STR_EQ(it->key, "DefaultEnabled");
+            TEST_ASSERT(it->type == LR_VALUE_BOOL);
+
+            /* 列表值：APT::Update::Post-Invoke-Success { "cmd"; } */
+            it = g_ptr_array_index(f->items, 7);
+            TEST_ASSERT_STR_EQ(it->key, "[0]");
+            TEST_ASSERT_STR_EQ(it->section,
+                               "APT::Update::Post-Invoke-Success");
+            TEST_ASSERT(it->type == LR_VALUE_STRING);
+            TEST_ASSERT(g_strstr_len(it->data, -1, "appstreamcli refresh") !=
+                        NULL);
+
+            lr_config_file_free(f);
+            g_free(p);
+        }
     }
 }
