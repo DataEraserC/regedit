@@ -239,4 +239,155 @@ void test_parsers(void)
         g_unlink(p);
         g_free(p);
     }
+
+    /* ---------- 真实示例文件（testdata/，meson 在源码根运行） ---------- */
+    {
+        const gchar *td = "testdata";
+
+        /* INI */
+        {
+            gchar *p = g_build_filename(td, "sample.ini", NULL);
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_INI);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 5);
+
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->key, "Port");
+            TEST_ASSERT(it->type == LR_VALUE_NUMBER);
+            TEST_ASSERT_STR_EQ(it->section, "server");
+            TEST_ASSERT_STR_EQ(it->comment, "顶部注释：说明下方配置\n行内注释");
+
+            it = g_ptr_array_index(f->items, 2);
+            TEST_ASSERT_STR_EQ(it->key, "Name");
+            TEST_ASSERT(it->type == LR_VALUE_STRING);
+            TEST_ASSERT_STR_EQ(it->data, "my host");
+
+            it = g_ptr_array_index(f->items, 3);
+            TEST_ASSERT_STR_EQ(it->key, "Level");
+            TEST_ASSERT_STR_EQ(it->section, "logging");
+            TEST_ASSERT_STR_EQ(it->comment, "分号注释：日志配置");
+
+            it = g_ptr_array_index(f->items, 4);
+            TEST_ASSERT_STR_EQ(it->key, "Verbose");
+            TEST_ASSERT(it->type == LR_VALUE_BOOL);
+
+            lr_config_file_free(f);
+            g_free(p);
+        }
+
+        /* 扁平 KeyValue */
+        {
+            gchar *p = g_build_filename(td, "sample.environment.conf", NULL);
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_KV);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 4);
+
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->key, "PATH");
+            TEST_ASSERT(it->type == LR_VALUE_STRING);
+            TEST_ASSERT_STR_EQ(it->comment, "系统环境变量风格");
+
+            it = g_ptr_array_index(f->items, 2);
+            TEST_ASSERT_STR_EQ(it->key, "DEBUG");
+            TEST_ASSERT(it->type == LR_VALUE_BOOL);
+
+            it = g_ptr_array_index(f->items, 3);
+            TEST_ASSERT_STR_EQ(it->key, "MAX_CONNECTIONS");
+            TEST_ASSERT(it->type == LR_VALUE_NUMBER);
+
+            lr_config_file_free(f);
+            g_free(p);
+        }
+
+        /* systemd unit */
+        {
+            gchar *p = g_build_filename(td, "sample.service", NULL);
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_SYSTEMD);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 6);
+
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->key, "Description");
+            TEST_ASSERT_STR_EQ(it->section, "Unit");
+
+            it = g_ptr_array_index(f->items, 4);
+            TEST_ASSERT_STR_EQ(it->key, "Restart");
+            TEST_ASSERT_STR_EQ(it->data, "on-failure");
+
+            it = g_ptr_array_index(f->items, 5);
+            TEST_ASSERT_STR_EQ(it->key, "WantedBy");
+            TEST_ASSERT_STR_EQ(it->section, "Install");
+
+            lr_config_file_free(f);
+            g_free(p);
+        }
+
+        /* 关键字-参数（含被注释配置） */
+        {
+            gchar *p = g_build_filename(td, "sample.sshd_config", NULL);
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_KEYWORD);
+            TEST_ASSERT(f->parsed);
+            /* 5 项配置 + #UseDNS no 被注释项 = 6 */
+            TEST_ASSERT(f->items->len == 6);
+
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->key, "Port");
+            TEST_ASSERT(it->type == LR_VALUE_NUMBER);
+            TEST_ASSERT_STR_EQ(it->data, "22");
+            /* 中文说明文字被当作备注，而非被注释的配置 */
+            TEST_ASSERT_STR_EQ(it->comment, "OpenSSH 服务端配置风格");
+
+            it = g_ptr_array_index(f->items, 2);
+            TEST_ASSERT_STR_EQ(it->key, "PermitRootLogin");
+            TEST_ASSERT(it->type == LR_VALUE_BOOL);
+
+            it = g_ptr_array_index(f->items, 4);
+            TEST_ASSERT_STR_EQ(it->key, "UseDNS");
+            TEST_ASSERT(!it->enabled);
+
+            it = g_ptr_array_index(f->items, 5);
+            TEST_ASSERT_STR_EQ(it->key, "MaxSessions");
+            TEST_ASSERT(it->type == LR_VALUE_NUMBER);
+
+            lr_config_file_free(f);
+            g_free(p);
+        }
+
+        /* JSON */
+        {
+            gchar *p = g_build_filename(td, "sample.json", NULL);
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_JSON);
+            TEST_ASSERT(lr_format_supported(LR_FORMAT_JSON));
+            TEST_ASSERT(f->parsed);
+
+            lr_config_file_free(f);
+            g_free(p);
+        }
+
+        /* shebang 脚本：文本兜底 */
+        {
+            gchar *p = g_build_filename(td, "sample-script.sh", NULL);
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_UNKNOWN);
+            TEST_ASSERT(!lr_format_supported(lr_format_detect(p)));
+            g_free(p);
+        }
+
+        /* 未知格式普通文本：文本兜底 */
+        {
+            gchar *p = g_build_filename(td, "sample.unknown.txt", NULL);
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_UNKNOWN);
+            TEST_ASSERT(!lr_format_supported(lr_format_detect(p)));
+            g_free(p);
+        }
+    }
 }

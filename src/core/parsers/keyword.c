@@ -27,6 +27,18 @@ collapse_whitespace(const char *s)
     return g_string_free(out, FALSE);
 }
 
+/* 是否含非 ASCII 字节（中文等说明文字特征） */
+static gboolean
+has_non_ascii(const char *s)
+{
+    for (; *s != '\0'; s++)
+    {
+        if ((guchar)*s >= 0x80)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 gboolean
 lr_parse_keyword(const char *path, LrConfigFile *file)
 {
@@ -70,8 +82,10 @@ lr_parse_keyword(const char *path, LrConfigFile *file)
             if (*content == '\0')
                 continue;
 
-            /* 被注释的配置：关键字 + 单 token 参数（如 #Port 22） */
-            if (g_ascii_isalpha(content[0]) || content[0] == '_')
+            /* 被注释的配置：关键字 + 单 token 参数（如 #Port 22）。
+             * 含非 ASCII（如中文说明）一律视为说明文字，避免误判 */
+            if ((g_ascii_isalpha(content[0]) || content[0] == '_') &&
+                !has_non_ascii(content))
             {
                 sp = strchr(content, ' ');
                 if (sp == NULL)

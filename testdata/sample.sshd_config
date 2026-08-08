@@ -1,0 +1,8 @@
+# sample.sshd_config —— 关键字-参数格式示例
+# OpenSSH 服务端配置风格
+Port 22
+Protocol 2
+PermitRootLogin no
+PasswordAuthentication yes
+#UseDNS no
+MaxSessions 10

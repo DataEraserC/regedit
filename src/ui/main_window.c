@@ -50,8 +50,7 @@ on_tree_select(const char *path, gboolean is_dir, gpointer user_data)
 }
 
 /* 命令行 / 外部调用：直接打开指定文件（目录则仅定位到树中） */
-void
-lr_main_window_open_file(LrMainWindow *mw, const char *path)
+void lr_main_window_open_file(LrMainWindow *mw, const char *path)
 {
     gboolean is_dir = g_file_test(path, G_FILE_TEST_IS_DIR);
     open_path(mw, path, is_dir);

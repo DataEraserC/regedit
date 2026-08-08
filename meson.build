@@ -65,5 +65,7 @@ if get_option('tests')
     dependencies: [glibdep, giodep, jsondep],
     include_directories: [lr_core_inc, include_directories('tests')],
   )
-  test('core-tests', test_runner)
+  # 在源码根目录运行测试，便于以相对路径读取 testdata/ 下的真实示例文件
+  test('core-tests', test_runner,
+       workdir: meson.project_source_root())
 endif

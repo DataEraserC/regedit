@@ -1,0 +1,12 @@
+# sample.service —— systemd unit 格式示例
+[Unit]
+Description=Example service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/example --daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

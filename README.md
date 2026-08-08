@@ -123,6 +123,7 @@ meson compile -C builddir
 ```bash
 ./builddir/linux-regedit            # 浏览 /etc 与 ~/.config
 ./builddir/linux-regedit 路径/文件   # 启动并直接打开指定文件
+./builddir/linux-regedit testdata/sample.json  # 快速预览 JSON 树形展示
 ```
 
 ### 测试
@@ -130,6 +131,8 @@ meson compile -C builddir
 ```bash
 meson test -C builddir
 ```
+
+> 单元测试除临时构造的输入外，还会读取 `testdata/` 下每种格式的**真实示例文件**并逐项断言解析结果（格式识别、类型、注释、启用状态等），作为回归保护；这些示例也可直接用 `linux-regedit testdata/<文件>` 在界面中人工预览。
 
 > ⚠️ 提示：`/etc` 下部分文件需要 root 权限才能读取，此时可用 `sudo` 运行以获得完整目录树。
 
@@ -156,8 +159,10 @@ linux-regedit/
 │   │       ├── ini.c/h      # INI 解析器
 │   │       ├── kv.c/h       # 扁平 key=value 解析器
 │   │       ├── systemd.c/h  # systemd unit 解析器
-│   │       └── keyword.c/h  # 关键字-参数解析器（sshd_config）
-└── tests/                   # 单元测试（类型识别 / 解析器 / 目录扫描过滤）
+│   │       ├── keyword.c/h  # 关键字-参数解析器（sshd_config）
+│   │       └── json.c/h     # JSON 解析器（json-glib，树形展示）
+├── testdata/             # 各格式真实示例文件（单元测试 + 手动 GUI 验证）
+└── tests/                # 单元测试（类型识别 / 解析器 / 目录扫描过滤）
 ```
 
 ---
