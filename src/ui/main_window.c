@@ -9,6 +9,9 @@ struct _LrMainWindow
     LrValuePane *value;
     GtkWidget *location_entry;
     char *current_path; /* 当前打开/选中的路径 */
+    char *pending_path; /* 恢复状态时待定位的路径 */
+    gint saved_w;       /* 非最大化时的窗口宽度 */
+    gint saved_h;       /* 非最大化时的窗口高度 */
 };
 
 static void
@@ -244,12 +247,30 @@ lr_main_window_save_state(LrMainWindow *self)
     if (self->current_path != NULL)
         g_key_file_set_string(kf, "main", "path", self->current_path);
 
-    gtk_window_get_size(GTK_WINDOW(self->window), &w, &h);
     gtk_window_get_position(GTK_WINDOW(self->window), &x, &y);
-    g_key_file_set_integer(kf, "window", "width", w);
-    g_key_file_set_integer(kf, "window", "height", h);
     g_key_file_set_integer(kf, "window", "x", x);
     g_key_file_set_integer(kf, "window", "y", y);
+
+    /* 非最大化尺寸优先（最大化时窗口尺寸无参考意义） */
+    if (self->saved_w > 0 && self->saved_h > 0)
+    {
+        w = self->saved_w;
+        h = self->saved_h;
+    }
+    else
+    {
+        gtk_window_get_size(GTK_WINDOW(self->window), &w, &h);
+    }
+    g_key_file_set_integer(kf, "window", "width", w);
+    g_key_file_set_integer(kf, "window", "height", h);
+
+    {
+        GdkWindow *gdkwin = gtk_widget_get_window(GTK_WIDGET(self->window));
+        gboolean maximized =
+            gdkwin != NULL &&
+            (gdk_window_get_state(gdkwin) & GDK_WINDOW_STATE_MAXIMIZED) != 0;
+        g_key_file_set_boolean(kf, "window", "maximized", maximized);
+    }
 
     data = g_key_file_to_data(kf, NULL, NULL);
     if (data != NULL)
@@ -260,6 +281,39 @@ lr_main_window_save_state(LrMainWindow *self)
     g_key_file_free(kf);
     g_free(file);
     g_free(dir);
+}
+
+/* 非最大化时记录窗口尺寸（最大化时窗口尺寸无参考意义） */
+static gboolean
+on_window_state_event(GtkWidget *widget, GdkEventWindowState *event,
+                      gpointer user_data)
+{
+    LrMainWindow *self = user_data;
+    (void)widget;
+
+    if ((event->new_window_state & GDK_WINDOW_STATE_MAXIMIZED) == 0)
+    {
+        gint w = 0, h = 0;
+        gtk_window_get_size(GTK_WINDOW(self->window), &w, &h);
+        if (w > 0 && h > 0)
+        {
+            self->saved_w = w;
+            self->saved_h = h;
+        }
+    }
+    return FALSE;
+}
+
+/* 窗口显示后延迟定位上次路径 */
+static gboolean
+on_reveal_path_idle(gpointer user_data)
+{
+    LrMainWindow *self = user_data;
+
+    if (self->pending_path != NULL)
+        lr_tree_pane_reveal_path(self->tree, self->pending_path);
+    g_clear_pointer(&self->pending_path, g_free);
+    return G_SOURCE_REMOVE;
 }
 
 static void
@@ -287,6 +341,7 @@ void lr_main_window_restore_state(LrMainWindow *self)
     if (g_key_file_load_from_file(kf, file, G_KEY_FILE_NONE, &error))
     {
         gint w, h, x, y;
+        gboolean maximized;
 
         w = g_key_file_get_integer(kf, "window", "width", NULL);
         h = g_key_file_get_integer(kf, "window", "height", NULL);
@@ -297,11 +352,16 @@ void lr_main_window_restore_state(LrMainWindow *self)
         y = g_key_file_get_integer(kf, "window", "y", NULL);
         gtk_window_move(GTK_WINDOW(self->window), x, y);
 
+        maximized = g_key_file_get_boolean(kf, "window", "maximized", NULL);
+        if (maximized)
+            gtk_window_maximize(GTK_WINDOW(self->window));
+
         {
             gchar *path = g_key_file_get_string(kf, "main", "path", NULL);
             if (path != NULL)
             {
-                lr_tree_pane_reveal_path(self->tree, path);
+                g_free(self->pending_path);
+                self->pending_path = g_strdup(path);
                 g_free(path);
             }
         }
@@ -310,6 +370,9 @@ void lr_main_window_restore_state(LrMainWindow *self)
     {
         g_clear_error(&error);
     }
+
+    if (self->pending_path != NULL)
+        g_idle_add(on_reveal_path_idle, self);
 
     g_key_file_free(kf);
     g_free(file);
@@ -328,6 +391,8 @@ lr_main_window_new(void)
     gtk_window_set_position(GTK_WINDOW(mw->window), GTK_WIN_POS_CENTER);
     g_signal_connect(mw->window, "destroy",
                      G_CALLBACK(on_window_destroy), mw);
+    g_signal_connect(mw->window, "window-state-event",
+                     G_CALLBACK(on_window_state_event), mw);
 
     vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
@@ -365,6 +430,7 @@ void lr_main_window_free(LrMainWindow *self)
     if (self == NULL)
         return;
     g_free(self->current_path);
+    g_clear_pointer(&self->pending_path, g_free);
     lr_tree_pane_free(self->tree);
     lr_value_pane_free(self->value);
     g_free(self);
