@@ -132,6 +132,7 @@ lr_value_pane_new(void)
 
     column = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(column, "启用");
+    gtk_tree_view_column_set_resizable(column, TRUE);
     renderer = gtk_cell_renderer_text_new();
     gtk_tree_view_column_pack_start(column, renderer, FALSE);
     gtk_tree_view_column_add_attribute(column, renderer, "text", COL_ENABLED);
@@ -139,6 +140,7 @@ lr_value_pane_new(void)
 
     column = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(column, "名称");
+    gtk_tree_view_column_set_resizable(column, TRUE);
     renderer = gtk_cell_renderer_text_new();
     gtk_tree_view_column_pack_start(column, renderer, TRUE);
     gtk_tree_view_column_add_attribute(column, renderer, "text", COL_NAME);
@@ -147,6 +149,7 @@ lr_value_pane_new(void)
 
     column = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(column, "类型");
+    gtk_tree_view_column_set_resizable(column, TRUE);
     renderer = gtk_cell_renderer_text_new();
     gtk_tree_view_column_pack_start(column, renderer, FALSE);
     gtk_tree_view_column_add_attribute(column, renderer, "text", COL_TYPE);
@@ -154,6 +157,7 @@ lr_value_pane_new(void)
 
     column = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(column, "数据");
+    gtk_tree_view_column_set_resizable(column, TRUE);
     renderer = gtk_cell_renderer_text_new();
     gtk_tree_view_column_pack_start(column, renderer, TRUE);
     gtk_tree_view_column_add_attribute(column, renderer, "text", COL_DATA);
@@ -162,6 +166,7 @@ lr_value_pane_new(void)
 
     column = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(column, "备注");
+    gtk_tree_view_column_set_resizable(column, TRUE);
     renderer = gtk_cell_renderer_text_new();
     g_object_set(renderer, "foreground", "gray", NULL);
     gtk_tree_view_column_pack_start(column, renderer, TRUE);
