@@ -81,6 +81,13 @@ lr_format_detect(const char *path)
     if (head == NULL)
         return LR_FORMAT_UNKNOWN;
 
+    /* 脚本解释器（shebang #!）：一律以文本形式打开，不做配置解析 */
+    if (g_str_has_prefix(head, "#!"))
+    {
+        g_free(head);
+        return LR_FORMAT_UNKNOWN;
+    }
+
     lines = g_strsplit(head, "\n", -1);
     g_free(head);
 

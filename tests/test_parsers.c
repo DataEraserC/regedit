@@ -142,6 +142,18 @@ void test_parsers(void)
         g_free(p);
     }
 
+    /* ---------- shebang 脚本：以文本形式打开 ---------- */
+    {
+        gchar *p = write_tmp("lr-test-6.sh",
+                             "#!/bin/bash\n"
+                             "# 配置脚本\n"
+                             "echo hello\n");
+        TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_UNKNOWN);
+        TEST_ASSERT(!lr_format_supported(LR_FORMAT_UNKNOWN));
+        g_unlink(p);
+        g_free(p);
+    }
+
     /* ---------- 关键字-参数（sshd_config 风格） ---------- */
     {
         gchar *p = write_tmp("lr-test-5.conf",
