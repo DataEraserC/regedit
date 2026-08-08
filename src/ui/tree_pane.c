@@ -339,6 +339,31 @@ on_popup_copy_name(GtkMenuItem *item, gpointer user_data)
     }
 }
 
+/* 独立子窗口：显示并把位置定到主窗口中心（不与主窗口联动） */
+static void
+center_dialog_on(GtkWidget *dialog, GtkWindow *parent)
+{
+    gint px, py, pw, ph, dw, dh;
+
+    gtk_window_get_position(parent, &px, &py);
+    gtk_window_get_size(parent, &pw, &ph);
+    gtk_widget_show_all(dialog);
+    gtk_window_get_size(GTK_WINDOW(dialog), &dw, &dh);
+    gtk_window_move(GTK_WINDOW(dialog),
+                    MAX(px + (pw - dw) / 2, 0),
+                    MAX(py + (ph - dh) / 2, 0));
+}
+
+/* 对话框任何响应（含关闭）都销毁自身 */
+static void
+tree_dialog_destroy_on_response(GtkDialog *dialog, gint response_id,
+                                gpointer user_data)
+{
+    (void)response_id;
+    (void)user_data;
+    gtk_widget_destroy(GTK_WIDGET(dialog));
+}
+
 /* 尚未实现的功能：弹出提示 */
 static void
 on_popup_not_impl(GtkMenuItem *item, gpointer user_data)
@@ -348,11 +373,12 @@ on_popup_not_impl(GtkMenuItem *item, gpointer user_data)
     GtkWidget *dialog;
 
     (void)item;
-    dialog = gtk_message_dialog_new(
-        GTK_WINDOW(toplevel), GTK_DIALOG_MODAL, GTK_MESSAGE_INFO,
-        GTK_BUTTONS_OK, "「%s」功能尚未实现，规划于后续版本。", label);
-    gtk_dialog_run(GTK_DIALOG(dialog));
-    gtk_widget_destroy(dialog);
+    dialog = gtk_message_dialog_new(NULL, 0, GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
+                                    "「%s」功能尚未实现，规划于后续版本。",
+                                    label);
+    g_signal_connect(dialog, "response",
+                     G_CALLBACK(tree_dialog_destroy_on_response), NULL);
+    center_dialog_on(dialog, GTK_WINDOW(toplevel));
 }
 
 static void

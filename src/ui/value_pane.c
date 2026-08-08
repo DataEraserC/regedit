@@ -648,6 +648,362 @@ append_text_column(GtkTreeView *view, const char *title, gint col,
     gtk_tree_view_append_column(view, column);
 }
 
+/* ========== 编辑（仅内存，不写盘） ========== */
+
+/* 数字文本校验：仅数字/符号/十六进制 */
+static gboolean
+is_number_text(const char *s)
+{
+    const char *p;
+    gboolean has_digit = FALSE;
+
+    if (s == NULL || *s == '\0')
+        return FALSE;
+    for (p = s; *p; p++)
+    {
+        if (g_ascii_isdigit(*p))
+            has_digit = TRUE;
+        else if (g_ascii_isspace(*p))
+            ;
+        else if (strchr("+-.xXabcdefABCDEF", *p) != NULL)
+            ;
+        else
+            return FALSE;
+    }
+    return has_digit;
+}
+
+/* 布尔文本校验：true/false/yes/no/0/1 */
+static gboolean
+is_valid_bool_text(const char *s)
+{
+    static const gchar *vals[] = {"true", "false", "yes", "no", "0", "1",
+                                  NULL};
+    gint i;
+
+    if (s == NULL)
+        return FALSE;
+    for (i = 0; vals[i] != NULL; i++)
+        if (g_ascii_strcasecmp(s, vals[i]) == 0)
+            return TRUE;
+    return FALSE;
+}
+
+/* 数字类型：输入时过滤非数字字符 */
+static void
+on_number_insert_text(GtkEditable *editable, const gchar *text, gint length,
+                      gint *position, gpointer data)
+{
+    const gchar *p;
+    (void)length;
+    (void)position;
+    (void)data;
+
+    for (p = text; *p; p++)
+    {
+        if (!g_ascii_isdigit(*p) && !g_ascii_isspace(*p) &&
+            strchr("+-.xXabcdefABCDEF", *p) == NULL)
+        {
+            g_signal_stop_emission_by_name(editable, "insert-text");
+            return;
+        }
+    }
+}
+
+/* 数据列开始编辑：按类型加数字过滤 / 布尔补全 */
+static void
+on_data_editing_started(GtkCellRenderer *renderer, GtkCellEditable *editable,
+                        const gchar *path, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GtkTreeIter iter;
+    GtkTreePath *tp;
+    gchar *type = NULL;
+    (void)renderer;
+
+    if (!GTK_IS_ENTRY(editable))
+        return;
+    tp = gtk_tree_path_new_from_string(path);
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store), &iter, tp))
+    {
+        gtk_tree_path_free(tp);
+        return;
+    }
+    gtk_tree_path_free(tp);
+
+    gtk_tree_model_get(GTK_TREE_MODEL(self->store), &iter, COL_TYPE, &type, -1);
+    if (type == NULL)
+        return;
+
+    if (g_strcmp0(type, "Number") == 0)
+    {
+        g_signal_connect(editable, "insert-text",
+                         G_CALLBACK(on_number_insert_text), NULL);
+    }
+    else if (g_strcmp0(type, "Boolean") == 0)
+    {
+        static const gchar *vals[] = {"true", "false", "yes", "no", "0",
+                                      "1"};
+        GtkListStore *cs = gtk_list_store_new(1, G_TYPE_STRING);
+        GtkEntryCompletion *completion = gtk_entry_completion_new();
+        gint i;
+
+        for (i = 0; i < 6; i++)
+            gtk_list_store_insert_with_values(cs, NULL, i, 0, vals[i], -1);
+        gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(cs));
+        gtk_entry_completion_set_text_column(completion, 0);
+        gtk_entry_completion_set_inline_completion(completion, TRUE);
+        gtk_entry_set_completion(GTK_ENTRY(editable), completion);
+        g_object_unref(cs);
+    }
+    g_free(type);
+}
+
+/* 数据列编辑完成：按类型校验后更新（不写盘） */
+static void
+on_data_edited(GtkCellRendererText *renderer, const gchar *path,
+               const gchar *new_text, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GtkTreeIter iter;
+    GtkTreePath *tp;
+    gchar *type = NULL;
+    (void)renderer;
+
+    tp = gtk_tree_path_new_from_string(path);
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store), &iter, tp))
+    {
+        gtk_tree_path_free(tp);
+        return;
+    }
+    gtk_tree_path_free(tp);
+
+    gtk_tree_model_get(GTK_TREE_MODEL(self->store), &iter, COL_TYPE, &type, -1);
+    if (type != NULL)
+    {
+        if (g_strcmp0(type, "Number") == 0 && !is_number_text(new_text))
+        {
+            g_free(type);
+            return; /* 非法数字：拒绝修改 */
+        }
+        if (g_strcmp0(type, "Boolean") == 0 && !is_valid_bool_text(new_text))
+        {
+            g_free(type);
+            return;
+        }
+        g_free(type);
+    }
+    gtk_tree_store_set(self->store, &iter, COL_DATA, new_text, -1);
+}
+
+/* 启用列（下拉 true/false）编辑完成 */
+static void
+on_enabled_edited(GtkCellRendererText *renderer, const gchar *path,
+                  const gchar *new_text, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GtkTreeIter iter;
+    GtkTreePath *tp;
+    (void)renderer;
+
+    tp = gtk_tree_path_new_from_string(path);
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store), &iter, tp))
+    {
+        gtk_tree_path_free(tp);
+        return;
+    }
+    gtk_tree_path_free(tp);
+    gtk_tree_store_set(self->store, &iter, COL_ENABLED, new_text, -1);
+}
+
+/* 新建一行（仅内存，不写盘） */
+static void
+on_new_value(GtkMenuItem *item, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    const gchar *type = gtk_menu_item_get_label(item);
+    const gchar *def_name, *def_data;
+    GtkTreeIter iter;
+    (void)item;
+
+    if (g_strcmp0(type, "Section") == 0)
+    {
+        def_name = "NewSection";
+        def_data = "";
+    }
+    else if (g_strcmp0(type, "Boolean") == 0)
+    {
+        def_name = "NewBoolean";
+        def_data = "false";
+    }
+    else if (g_strcmp0(type, "Number") == 0)
+    {
+        def_name = "NewNumber";
+        def_data = "0";
+    }
+    else
+    {
+        def_name = "NewString";
+        def_data = "";
+    }
+
+    gtk_tree_store_append(self->store, &iter, NULL);
+    gtk_tree_store_set(self->store, &iter, COL_ENABLED, "true", COL_NAME,
+                       def_name, COL_TYPE, type, COL_DATA, def_data,
+                       COL_COMMENT, "", -1);
+}
+
+/* 新建 → 子菜单：列出所有可新建的类型（点击即新建一行） */
+static void
+build_new_submenu(LrValuePane *self, GtkWidget *menu)
+{
+    static const gchar *types[] = {
+        "Section",
+        "String",
+        "Boolean",
+        "Number",
+        NULL,
+    };
+    gint i;
+
+    for (i = 0; types[i] != NULL; i++)
+    {
+        GtkWidget *item = gtk_menu_item_new_with_label(types[i]);
+        g_signal_connect(item, "activate", G_CALLBACK(on_new_value), self);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    }
+}
+
+/* 启用列：下拉 true/false */
+static void
+build_enabled_column(LrValuePane *self)
+{
+    GtkCellRenderer *renderer = gtk_cell_renderer_combo_new();
+    GtkListStore *store = gtk_list_store_new(1, G_TYPE_STRING);
+    GtkTreeViewColumn *col;
+
+    gtk_list_store_insert_with_values(store, NULL, 0, 0, "true", -1);
+    gtk_list_store_insert_with_values(store, NULL, 1, 0, "false", -1);
+    g_object_set(renderer, "model", store, "text-column", 0, "editable", TRUE,
+                 "has-entry", FALSE, NULL);
+    g_object_unref(store);
+    g_signal_connect(renderer, "edited", G_CALLBACK(on_enabled_edited), self);
+
+    col = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(col, "启用");
+    gtk_tree_view_column_pack_start(col, renderer, FALSE);
+    gtk_tree_view_column_add_attribute(col, renderer, "text", COL_ENABLED);
+    gtk_tree_view_append_column(self->view, col);
+}
+
+/* 类型列（下拉）编辑完成：更新类型，并按新类型给数据合理默认值 */
+static void
+on_type_edited(GtkCellRendererText *renderer, const gchar *path,
+               const gchar *new_text, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GtkTreeIter iter;
+    GtkTreePath *tp;
+    const gchar *def_data = NULL;
+    (void)renderer;
+
+    tp = gtk_tree_path_new_from_string(path);
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store), &iter, tp))
+    {
+        gtk_tree_path_free(tp);
+        return;
+    }
+    gtk_tree_path_free(tp);
+
+    /* 类型切换时给数据一个该类型下的合理默认值 */
+    if (g_strcmp0(new_text, "Boolean") == 0)
+        def_data = "false";
+    else if (g_strcmp0(new_text, "Number") == 0)
+        def_data = "0";
+
+    if (def_data != NULL)
+        gtk_tree_store_set(self->store, &iter, COL_TYPE, new_text, COL_DATA,
+                           def_data, -1);
+    else
+        gtk_tree_store_set(self->store, &iter, COL_TYPE, new_text, -1);
+}
+
+/* 类型列：下拉 Section/String/Boolean/Number */
+static void
+build_type_column(LrValuePane *self)
+{
+    GtkCellRenderer *renderer = gtk_cell_renderer_combo_new();
+    GtkListStore *store = gtk_list_store_new(1, G_TYPE_STRING);
+    GtkTreeViewColumn *col;
+    static const gchar *types[] = {"Section", "String", "Boolean", "Number"};
+    gint i;
+
+    for (i = 0; i < 4; i++)
+        gtk_list_store_insert_with_values(store, NULL, i, 0, types[i], -1);
+    g_object_set(renderer, "model", store, "text-column", 0, "editable", TRUE,
+                 "has-entry", FALSE, NULL);
+    g_object_unref(store);
+    g_signal_connect(renderer, "edited", G_CALLBACK(on_type_edited), self);
+
+    col = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(col, "类型");
+    gtk_tree_view_column_pack_start(col, renderer, FALSE);
+    gtk_tree_view_column_add_attribute(col, renderer, "text", COL_TYPE);
+    gtk_tree_view_append_column(self->view, col);
+}
+
+/* 数据列：可编辑文本，按类型做输入限制/补全 */
+static void
+build_data_column(LrValuePane *self)
+{
+    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+    GtkTreeViewColumn *col;
+
+    g_object_set(renderer, "editable", TRUE, NULL);
+    g_signal_connect(renderer, "edited", G_CALLBACK(on_data_edited), self);
+    g_signal_connect(renderer, "editing-started",
+                     G_CALLBACK(on_data_editing_started), self);
+
+    col = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(col, "数据");
+    gtk_tree_view_column_pack_start(col, renderer, TRUE);
+    gtk_tree_view_column_add_attribute(col, renderer, "text", COL_DATA);
+    gtk_tree_view_column_set_expand(col, TRUE);
+    gtk_tree_view_append_column(self->view, col);
+}
+
+/* 右键弹出值面板菜单：新建 → 类型子菜单 */
+static void
+show_value_popup_menu(LrValuePane *self, GdkEventButton *event)
+{
+    GtkWidget *menu = gtk_menu_new();
+    GtkWidget *new_item = gtk_menu_item_new_with_label("新建");
+    GtkWidget *new_sub = gtk_menu_new();
+
+    build_new_submenu(self, new_sub);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(new_item), new_sub);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), new_item);
+
+    gtk_widget_show_all(menu);
+    gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
+}
+
+/* 表格页右键：弹出菜单 */
+static gboolean
+on_value_button_press(GtkWidget *widget, GdkEventButton *event,
+                      gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    (void)widget;
+
+    if (event->type == GDK_BUTTON_PRESS && event->button == 3)
+    {
+        show_value_popup_menu(self, event);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 LrValuePane *
 lr_value_pane_new(void)
 {
@@ -682,11 +1038,13 @@ lr_value_pane_new(void)
     gtk_tree_view_set_grid_lines(self->view, GTK_TREE_VIEW_GRID_LINES_VERTICAL);
     g_signal_connect(gtk_tree_view_get_selection(self->view), "changed",
                      G_CALLBACK(on_table_selection_changed), self);
+    g_signal_connect(self->view, "button-press-event",
+                     G_CALLBACK(on_value_button_press), self);
 
-    append_text_column(self->view, "启用", COL_ENABLED, FALSE, FALSE, 0);
+    build_enabled_column(self);
     append_text_column(self->view, "名称", COL_NAME, TRUE, FALSE, 160);
-    append_text_column(self->view, "类型", COL_TYPE, FALSE, FALSE, 0);
-    append_text_column(self->view, "数据", COL_DATA, TRUE, FALSE, 0);
+    build_type_column(self);
+    build_data_column(self);
     append_text_column(self->view, "备注", COL_COMMENT, TRUE, TRUE, 0);
 
     scrolled = gtk_scrolled_window_new(NULL, NULL);
