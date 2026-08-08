@@ -71,6 +71,8 @@ lr_format_detect(const char *path)
     gboolean has_kv = FALSE;
     gboolean has_non_comment = FALSE;
     gboolean keyword_style = TRUE;
+    guint keyword_lines = 0;         /* 匹配「关键字-参数」的行数 */
+    guint multiword_value_lines = 0; /* 其中参数为多词的行数 */
 
     /* 1) systemd unit 扩展名最明确 */
     if (has_systemd_extension(path))
@@ -107,8 +109,21 @@ lr_format_detect(const char *path)
         }
         if (strchr(line, '=') != NULL || strchr(line, ':') != NULL)
             has_kv = TRUE;
-        if (!is_keyword_line(line))
+        if (is_keyword_line(line))
+        {
+            /* 参数若含空白（多词），更像自然语言而非配置 */
+            char *sp = strchr(line, ' ');
+            if (sp == NULL)
+                sp = strchr(line, '\t');
+            if (sp != NULL && (strchr(sp + 1, ' ') != NULL ||
+                               strchr(sp + 1, '\t') != NULL))
+                multiword_value_lines++;
+            keyword_lines++;
+        }
+        else
+        {
             keyword_style = FALSE;
+        }
     }
 
     g_strfreev(lines);
@@ -118,7 +133,14 @@ lr_format_detect(const char *path)
     if (has_kv)
         return LR_FORMAT_KV;
     if (has_non_comment && keyword_style)
+    {
+        /* 若大多数「关键字-参数」行的参数为多词（自然语言特征，如 /etc/legal
+         * 的英文说明），判定为普通文本而非配置 */
+        if (keyword_lines > 0 &&
+            multiword_value_lines * 100 / keyword_lines > 60)
+            return LR_FORMAT_UNKNOWN;
         return LR_FORMAT_KEYWORD;
+    }
     return LR_FORMAT_UNKNOWN;
 }
 

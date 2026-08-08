@@ -204,4 +204,18 @@ void test_parsers(void)
         g_unlink(p);
         g_free(p);
     }
+
+    /* ---------- 纯英文文本（如 /etc/legal）：应判为未知格式 ---------- */
+    {
+        gchar *p = write_tmp("lr-test-7.txt",
+                             "The programs included with the Ubuntu system "
+                             "are free software;\n"
+                             "the exact distribution terms for each program "
+                             "are described in the\n"
+                             "individual files in /usr/share/doc/*/copyright.\n");
+        TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_UNKNOWN);
+        TEST_ASSERT(!lr_format_supported(LR_FORMAT_UNKNOWN));
+        g_unlink(p);
+        g_free(p);
+    }
 }
