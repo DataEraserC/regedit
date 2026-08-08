@@ -8,10 +8,14 @@ struct _LrMainWindow
     LrTreePane *tree;
     LrValuePane *value;
     GtkWidget *location_entry;
-    char *current_path; /* 当前打开/选中的路径 */
-    char *pending_path; /* 恢复状态时待定位的路径 */
-    gint saved_w;       /* 非最大化时的窗口宽度 */
-    gint saved_h;       /* 非最大化时的窗口高度 */
+    char *current_path;       /* 当前打开/选中的路径 */
+    char *pending_path;       /* 恢复状态时待定位的路径 */
+    gint saved_w;             /* 非最大化时的窗口宽度 */
+    gint saved_h;             /* 非最大化时的窗口高度 */
+    gint saved_x;             /* 窗口位置 X */
+    gint saved_y;             /* 窗口位置 Y */
+    gboolean saved_maximized; /* 是否最大化 */
+    guint save_timeout;       /* 节流保存定时器 */
 };
 
 static void
@@ -227,14 +231,13 @@ build_location_bar(LrMainWindow *mw)
     return bar;
 }
 
-/* 将窗口状态与上次路径保存到 /run（本次开机有效，重启清空） */
+/* 将窗口状态与上次路径保存到 /run（全部使用缓存值，不依赖窗口实时状态） */
 static void
 lr_main_window_save_state(LrMainWindow *self)
 {
     const char *runtime = g_get_user_runtime_dir();
     gchar *dir, *file, *data;
     GKeyFile *kf;
-    gint w = 0, h = 0, x = 0, y = 0;
 
     if (runtime == NULL)
         return;
@@ -247,30 +250,12 @@ lr_main_window_save_state(LrMainWindow *self)
     if (self->current_path != NULL)
         g_key_file_set_string(kf, "main", "path", self->current_path);
 
-    gtk_window_get_position(GTK_WINDOW(self->window), &x, &y);
-    g_key_file_set_integer(kf, "window", "x", x);
-    g_key_file_set_integer(kf, "window", "y", y);
-
-    /* 非最大化尺寸优先（最大化时窗口尺寸无参考意义） */
-    if (self->saved_w > 0 && self->saved_h > 0)
-    {
-        w = self->saved_w;
-        h = self->saved_h;
-    }
-    else
-    {
-        gtk_window_get_size(GTK_WINDOW(self->window), &w, &h);
-    }
-    g_key_file_set_integer(kf, "window", "width", w);
-    g_key_file_set_integer(kf, "window", "height", h);
-
-    {
-        GdkWindow *gdkwin = gtk_widget_get_window(GTK_WIDGET(self->window));
-        gboolean maximized =
-            gdkwin != NULL &&
-            (gdk_window_get_state(gdkwin) & GDK_WINDOW_STATE_MAXIMIZED) != 0;
-        g_key_file_set_boolean(kf, "window", "maximized", maximized);
-    }
+    g_key_file_set_integer(kf, "window", "x", self->saved_x);
+    g_key_file_set_integer(kf, "window", "y", self->saved_y);
+    g_key_file_set_integer(kf, "window", "width", self->saved_w);
+    g_key_file_set_integer(kf, "window", "height", self->saved_h);
+    g_key_file_set_boolean(kf, "window", "maximized",
+                           self->saved_maximized);
 
     data = g_key_file_to_data(kf, NULL, NULL);
     if (data != NULL)
@@ -283,7 +268,34 @@ lr_main_window_save_state(LrMainWindow *self)
     g_free(dir);
 }
 
-/* 非最大化时记录窗口尺寸（最大化时窗口尺寸无参考意义） */
+/* 节流保存：窗口移动/缩放后延迟写入 */
+static gboolean
+on_save_timeout(gpointer user_data)
+{
+    LrMainWindow *self = user_data;
+    self->save_timeout = 0;
+    lr_main_window_save_state(self);
+    return G_SOURCE_REMOVE;
+}
+
+/* 窗口位置/尺寸变化时记录并节流保存 */
+static gboolean
+on_configure_event(GtkWidget *widget, GdkEventConfigure *event,
+                   gpointer user_data)
+{
+    LrMainWindow *self = user_data;
+    (void)widget;
+
+    self->saved_x = event->x;
+    self->saved_y = event->y;
+
+    if (self->save_timeout != 0)
+        g_source_remove(self->save_timeout);
+    self->save_timeout = g_timeout_add(500, on_save_timeout, self);
+    return FALSE;
+}
+
+/* 窗口状态变化（最大化等）时记录尺寸与最大化标志 */
 static gboolean
 on_window_state_event(GtkWidget *widget, GdkEventWindowState *event,
                       gpointer user_data)
@@ -291,7 +303,11 @@ on_window_state_event(GtkWidget *widget, GdkEventWindowState *event,
     LrMainWindow *self = user_data;
     (void)widget;
 
-    if ((event->new_window_state & GDK_WINDOW_STATE_MAXIMIZED) == 0)
+    self->saved_maximized =
+        (event->new_window_state & GDK_WINDOW_STATE_MAXIMIZED) != 0;
+
+    /* 非最大化时记录真实尺寸（最大化时窗口尺寸无参考意义） */
+    if (!self->saved_maximized)
     {
         gint w = 0, h = 0;
         gtk_window_get_size(GTK_WINDOW(self->window), &w, &h);
@@ -321,6 +337,12 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
 {
     LrMainWindow *self = user_data;
     (void)widget;
+
+    if (self->save_timeout != 0)
+    {
+        g_source_remove(self->save_timeout);
+        self->save_timeout = 0;
+    }
     lr_main_window_save_state(self);
 }
 
@@ -385,12 +407,18 @@ lr_main_window_new(void)
     LrMainWindow *mw = g_new0(LrMainWindow, 1);
     GtkWidget *vbox, *menubar, *location_bar, *paned;
 
+    /* 与默认窗口大小一致，首次关闭前缓存有效 */
+    mw->saved_w = 920;
+    mw->saved_h = 600;
+
     mw->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(mw->window), "注册表编辑器");
     gtk_window_set_default_size(GTK_WINDOW(mw->window), 920, 600);
     gtk_window_set_position(GTK_WINDOW(mw->window), GTK_WIN_POS_CENTER);
     g_signal_connect(mw->window, "destroy",
                      G_CALLBACK(on_window_destroy), mw);
+    g_signal_connect(mw->window, "configure-event",
+                     G_CALLBACK(on_configure_event), mw);
     g_signal_connect(mw->window, "window-state-event",
                      G_CALLBACK(on_window_state_event), mw);
 
