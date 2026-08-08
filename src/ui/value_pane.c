@@ -20,7 +20,99 @@ struct _LrValuePane
     GtkTreeView *view;
     GtkListStore *store;
     GtkTextView *text;
+    GtkLabel *info_title;   /* 底部说明面板标题 */
+    GtkTextView *info_text; /* 底部说明面板内容 */
 };
+
+static void
+on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GSubprocess *proc = G_SUBPROCESS(source);
+    GBytes *out = NULL, *err_out = NULL;
+    GError *error = NULL;
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(self->info_text);
+
+    if (!g_subprocess_communicate_finish(proc, res, &out, &err_out, &error))
+    {
+        gtk_text_buffer_set_text(buf, "man 查询失败。", -1);
+        g_clear_error(&error);
+    }
+    else if (out != NULL)
+    {
+        gsize len = 0;
+        const gchar *data = g_bytes_get_data(out, &len);
+        if (len > 0)
+            gtk_text_buffer_set_text(buf, data, (gint)MIN(len, G_MAXINT));
+        else
+            gtk_text_buffer_set_text(buf, "未找到该名称的 man 手册页。", -1);
+    }
+    else
+    {
+        gtk_text_buffer_set_text(buf, "未找到该名称的 man 手册页。", -1);
+    }
+
+    g_clear_pointer(&out, g_bytes_unref);
+    g_clear_pointer(&err_out, g_bytes_unref);
+    g_object_unref(proc);
+}
+
+static void
+lr_value_pane_show_man(LrValuePane *self, const char *name)
+{
+    gchar *quoted, *cmd;
+    GError *error = NULL;
+    GSubprocess *proc;
+    gchar *title = g_strdup_printf("说明：%s（man）", name);
+
+    gtk_label_set_text(self->info_title, title);
+    g_free(title);
+
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
+                             "正在查询 man ...", -1);
+
+    quoted = g_shell_quote(name);
+    cmd = g_strdup_printf("man %s 2>/dev/null | col -b", quoted);
+    g_free(quoted);
+
+    proc = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE, &error,
+                            "sh", "-c", cmd, NULL);
+    g_free(cmd);
+
+    if (proc == NULL)
+    {
+        gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
+                                 "无法启动 man 查询。", -1);
+        g_clear_error(&error);
+        return;
+    }
+
+    g_subprocess_communicate_async(proc, NULL, NULL, on_man_done, self);
+}
+
+/* 表格选中行：查询该配置项名称的 man 说明 */
+static void
+on_table_selection_changed(GtkTreeSelection *sel, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GtkTreeIter iter;
+    GtkTreeModel *model;
+    gchar *name = NULL;
+
+    if (!gtk_tree_selection_get_selected(sel, &model, &iter))
+    {
+        gtk_label_set_text(self->info_title, "说明");
+        gtk_text_buffer_set_text(
+            gtk_text_view_get_buffer(self->info_text),
+            "在表格中选择一行，将在此显示该配置项名称的 man 手册说明。", -1);
+        return;
+    }
+
+    gtk_tree_model_get(model, &iter, COL_NAME, &name, -1);
+    if (name != NULL && *name != '\0')
+        lr_value_pane_show_man(self, name);
+    g_free(name);
+}
 
 static void
 show_text(LrValuePane *self, const char *path)
@@ -107,12 +199,12 @@ lr_value_pane_new(void)
     GtkCellRenderer *renderer;
     GtkTreeViewColumn *column;
 
-    self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    self->widget = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
 
     self->stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(self->stack),
                                   GTK_STACK_TRANSITION_TYPE_NONE);
-    gtk_box_pack_start(GTK_BOX(self->widget), self->stack, TRUE, TRUE, 0);
+    gtk_paned_pack1(GTK_PANED(self->widget), self->stack, TRUE, FALSE);
 
     /* --- 占位页（未选择时保持空白，不显示提示） --- */
     label = gtk_label_new("");
@@ -129,6 +221,8 @@ lr_value_pane_new(void)
     g_object_unref(self->store);
 
     gtk_tree_view_set_grid_lines(self->view, GTK_TREE_VIEW_GRID_LINES_VERTICAL);
+    g_signal_connect(gtk_tree_view_get_selection(self->view), "changed",
+                     G_CALLBACK(on_table_selection_changed), self);
 
     column = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(column, "启用");
@@ -199,6 +293,36 @@ lr_value_pane_new(void)
     gtk_stack_add_named(GTK_STACK(self->stack), self->text_page, "text");
 
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "empty");
+
+    /* --- 底部信息说明面板（选中表格行时显示 man 说明） --- */
+    {
+        GtkWidget *info_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        GtkWidget *info_scrolled;
+
+        self->info_title = GTK_LABEL(gtk_label_new("说明"));
+        gtk_widget_set_halign(GTK_WIDGET(self->info_title), GTK_ALIGN_START);
+        gtk_widget_set_margin_start(GTK_WIDGET(self->info_title), 6);
+        gtk_widget_set_margin_top(GTK_WIDGET(self->info_title), 4);
+        gtk_widget_set_margin_bottom(GTK_WIDGET(self->info_title), 2);
+        gtk_box_pack_start(GTK_BOX(info_page),
+                           GTK_WIDGET(self->info_title), FALSE, FALSE, 0);
+
+        self->info_text = GTK_TEXT_VIEW(gtk_text_view_new());
+        gtk_text_view_set_editable(self->info_text, FALSE);
+        gtk_text_view_set_wrap_mode(self->info_text, GTK_WRAP_WORD_CHAR);
+
+        info_scrolled = gtk_scrolled_window_new(NULL, NULL);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(info_scrolled),
+                                       GTK_POLICY_AUTOMATIC,
+                                       GTK_POLICY_AUTOMATIC);
+        gtk_container_add(GTK_CONTAINER(info_scrolled),
+                          GTK_WIDGET(self->info_text));
+        gtk_box_pack_start(GTK_BOX(info_page), info_scrolled, TRUE, TRUE, 0);
+
+        gtk_paned_pack2(GTK_PANED(self->widget), info_page, FALSE, FALSE);
+        gtk_paned_set_position(GTK_PANED(self->widget), 200);
+    }
+
     return self;
 }
 
