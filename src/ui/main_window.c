@@ -204,8 +204,6 @@ build_location_bar(LrMainWindow *mw)
 {
     GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 
-    gtk_widget_set_margin_start(bar, 8);
-    gtk_widget_set_margin_end(bar, 8);
     gtk_widget_set_margin_top(bar, 2);
     gtk_widget_set_margin_bottom(bar, 2);
 
