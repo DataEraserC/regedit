@@ -12,7 +12,7 @@ int main(int argc, char **argv)
     gint status;
 
     app = gtk_application_new("org.linux-regedit.app",
-                              G_APPLICATION_FLAGS_NONE);
+                              G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(app, "activate", G_CALLBACK(lr_app_activate), NULL);
 
     status = g_application_run(G_APPLICATION(app), argc, argv);

@@ -141,9 +141,8 @@ lr_value_pane_new(void)
                                   GTK_STACK_TRANSITION_TYPE_NONE);
     gtk_box_pack_start(GTK_BOX(self->widget), self->stack, TRUE, TRUE, 0);
 
-    /* --- 占位页 --- */
-    label = gtk_label_new("在左侧选择 /etc 或 ~/.config 下的配置文件\n"
-                          "支持的格式将解析为配置项列表");
+    /* --- 占位页（未选择时保持空白，不显示提示） --- */
+    label = gtk_label_new("");
     gtk_stack_add_named(GTK_STACK(self->stack), label, "empty");
 
     /* --- 表格页 --- */

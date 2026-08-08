@@ -23,6 +23,7 @@ struct _LrTreePane
     GdkPixbuf *icon_folder;
     GdkPixbuf *icon_config;
     GdkPixbuf *icon_other;
+    GdkPixbuf *icon_computer;
 };
 
 static GdkPixbuf *
@@ -54,20 +55,49 @@ add_dummy_child(LrTreePane *self, GtkTreeIter *parent)
                        -1);
 }
 
+/* 计算机虚拟根：下挂 /etc 与 ~/.config 两个真实根（类比注册表根键） */
 static void
-add_root(LrTreePane *self, const char *label, const char *path)
+add_computer_root(LrTreePane *self)
 {
-    GtkTreeIter root;
-    gtk_tree_store_append(self->store, &root, NULL);
-    gtk_tree_store_set(self->store, &root,
+    const gchar *home = g_get_home_dir();
+    gchar *config = g_build_filename(home, ".config", NULL);
+    GtkTreeIter computer, etc, user;
+
+    gtk_tree_store_append(self->store, &computer, NULL);
+    gtk_tree_store_set(self->store, &computer,
+                       COL_ICON, self->icon_computer,
+                       COL_NAME, "计算机",
+                       COL_PATH, "",
+                       COL_KIND, LR_SCAN_DIR,
+                       COL_FORMAT, LR_FORMAT_UNKNOWN,
+                       COL_LOADED, TRUE,
+                       -1);
+
+    /* /etc —— 系统级配置（类比 HKEY_LOCAL_MACHINE） */
+    gtk_tree_store_append(self->store, &etc, &computer);
+    gtk_tree_store_set(self->store, &etc,
                        COL_ICON, self->icon_folder,
-                       COL_NAME, label,
-                       COL_PATH, path,
+                       COL_NAME, "/etc",
+                       COL_PATH, "/etc",
                        COL_KIND, LR_SCAN_DIR,
                        COL_FORMAT, LR_FORMAT_UNKNOWN,
                        COL_LOADED, FALSE,
                        -1);
-    add_dummy_child(self, &root);
+    add_dummy_child(self, &etc);
+
+    /* ~/.config —— 用户级配置（类比 HKEY_CURRENT_USER） */
+    gtk_tree_store_append(self->store, &user, &computer);
+    gtk_tree_store_set(self->store, &user,
+                       COL_ICON, self->icon_folder,
+                       COL_NAME, "~/.config",
+                       COL_PATH, config,
+                       COL_KIND, LR_SCAN_DIR,
+                       COL_FORMAT, LR_FORMAT_UNKNOWN,
+                       COL_LOADED, FALSE,
+                       -1);
+    add_dummy_child(self, &user);
+
+    g_free(config);
 }
 
 static GdkPixbuf *
@@ -162,8 +192,14 @@ on_selection_changed(GtkTreeSelection *sel, gpointer user_data)
         return;
 
     gtk_tree_model_get(model, &iter, COL_PATH, &path, COL_KIND, &kind, -1);
-    if (self->select_cb != NULL && path != NULL && *path != '\0')
-        self->select_cb(path, kind == LR_SCAN_DIR, self->select_data);
+    if (self->select_cb != NULL)
+    {
+        /* 计算机虚拟根（空路径）也通知：按目录 + 空路径处理 */
+        if (path == NULL || *path == '\0')
+            self->select_cb("", TRUE, self->select_data);
+        else
+            self->select_cb(path, kind == LR_SCAN_DIR, self->select_data);
+    }
     g_free(path);
 }
 
@@ -173,13 +209,12 @@ lr_tree_pane_new(void)
     LrTreePane *self = g_new0(LrTreePane, 1);
     GtkCellRenderer *pix, *txt;
     GtkTreeViewColumn *col;
-    const gchar *home = g_get_home_dir();
-    gchar *config = g_build_filename(home, ".config", NULL);
 
     /* 图标 */
     self->icon_folder = load_icon("folder", 16);
     self->icon_config = load_icon("text-x-generic", 16);
     self->icon_other = load_icon("text-x-generic", 16);
+    self->icon_computer = load_icon("computer", 16);
 
     self->widget = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(self->widget),
@@ -212,10 +247,7 @@ lr_tree_pane_new(void)
     g_signal_connect(gtk_tree_view_get_selection(self->view), "changed",
                      G_CALLBACK(on_selection_changed), self);
 
-    /* 双根 */
-    add_root(self, "/etc", "/etc");
-    add_root(self, "~/.config", config);
-    g_free(config);
+    add_computer_root(self);
 
     return self;
 }
@@ -235,13 +267,18 @@ void lr_tree_pane_set_select_cb(LrTreePane *self, LrTreePaneSelectCb cb,
 
 void lr_tree_pane_refresh(LrTreePane *self)
 {
-    const gchar *home = g_get_home_dir();
-    gchar *config = g_build_filename(home, ".config", NULL);
-
     gtk_tree_store_clear(self->store);
-    add_root(self, "/etc", "/etc");
-    add_root(self, "~/.config", config);
-    g_free(config);
+    add_computer_root(self);
+}
+
+void lr_tree_pane_expand_all(LrTreePane *self)
+{
+    gtk_tree_view_expand_all(self->view);
+}
+
+void lr_tree_pane_collapse_all(LrTreePane *self)
+{
+    gtk_tree_view_collapse_all(self->view);
 }
 
 void lr_tree_pane_free(LrTreePane *self)
@@ -251,5 +288,6 @@ void lr_tree_pane_free(LrTreePane *self)
     g_clear_object(&self->icon_folder);
     g_clear_object(&self->icon_config);
     g_clear_object(&self->icon_other);
+    g_clear_object(&self->icon_computer);
     g_free(self);
 }

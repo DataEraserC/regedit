@@ -22,6 +22,10 @@ void lr_tree_pane_set_select_cb(LrTreePane *self, LrTreePaneSelectCb cb,
 /* 重新加载根节点（保留选择） */
 void lr_tree_pane_refresh(LrTreePane *self);
 
+/* 展开 / 收起全部节点 */
+void lr_tree_pane_expand_all(LrTreePane *self);
+void lr_tree_pane_collapse_all(LrTreePane *self);
+
 void lr_tree_pane_free(LrTreePane *self);
 
 #endif /* LR_UI_TREE_PANE_H */

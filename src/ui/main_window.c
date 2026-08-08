@@ -18,6 +18,15 @@ on_tree_select(const char *path, gboolean is_dir, gpointer user_data)
 
     gtk_statusbar_remove_all(GTK_STATUSBAR(mw->statusbar), mw->status_ctx);
 
+    /* 计算机虚拟根（空路径） */
+    if (path == NULL || *path == '\0')
+    {
+        lr_value_pane_clear(mw->value);
+        gtk_statusbar_push(GTK_STATUSBAR(mw->statusbar), mw->status_ctx,
+                           "计算机");
+        return;
+    }
+
     if (is_dir)
     {
         lr_value_pane_clear(mw->value);
@@ -70,35 +79,80 @@ on_about(GtkWidget *widget, gpointer user_data)
     gtk_widget_destroy(dialog);
 }
 
+static void
+on_expand_all(GtkWidget *widget, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    (void)widget;
+    lr_tree_pane_expand_all(mw->tree);
+}
+
+static void
+on_collapse_all(GtkWidget *widget, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    (void)widget;
+    lr_tree_pane_collapse_all(mw->tree);
+}
+
 static GtkWidget *
 build_menubar(LrMainWindow *mw)
 {
     GtkWidget *menubar = gtk_menu_bar_new();
-    GtkWidget *file_menu, *file_item, *help_menu, *help_item;
-    GtkWidget *item;
+    GtkWidget *menu, *menu_item, *item;
 
     /* 文件 */
-    file_item = gtk_menu_item_new_with_label("文件");
-    file_menu = gtk_menu_new();
+    menu_item = gtk_menu_item_new_with_label("文件");
+    menu = gtk_menu_new();
     item = gtk_menu_item_new_with_label("刷新");
     g_signal_connect(item, "activate", G_CALLBACK(on_refresh), mw);
-    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     item = gtk_separator_menu_item_new();
-    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     item = gtk_menu_item_new_with_label("退出");
     g_signal_connect(item, "activate", G_CALLBACK(on_quit), mw->window);
-    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), item);
-    gtk_menu_item_set_submenu(GTK_MENU_ITEM(file_item), file_menu);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), file_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
+
+    /* 编辑 */
+    menu_item = gtk_menu_item_new_with_label("编辑");
+    menu = gtk_menu_new();
+    item = gtk_menu_item_new_with_label("查找…");
+    gtk_widget_set_sensitive(item, FALSE); /* v0.2 实现 */
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
+
+    /* 查看 */
+    menu_item = gtk_menu_item_new_with_label("查看");
+    menu = gtk_menu_new();
+    item = gtk_menu_item_new_with_label("展开全部");
+    g_signal_connect(item, "activate", G_CALLBACK(on_expand_all), mw);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    item = gtk_menu_item_new_with_label("收起全部");
+    g_signal_connect(item, "activate", G_CALLBACK(on_collapse_all), mw);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
+
+    /* 收藏夹 */
+    menu_item = gtk_menu_item_new_with_label("收藏夹");
+    menu = gtk_menu_new();
+    item = gtk_menu_item_new_with_label("添加到收藏夹…");
+    gtk_widget_set_sensitive(item, FALSE); /* v0.5 实现 */
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
     /* 帮助 */
-    help_item = gtk_menu_item_new_with_label("帮助");
-    help_menu = gtk_menu_new();
+    menu_item = gtk_menu_item_new_with_label("帮助");
+    menu = gtk_menu_new();
     item = gtk_menu_item_new_with_label("关于");
     g_signal_connect(item, "activate", G_CALLBACK(on_about), mw->window);
-    gtk_menu_shell_append(GTK_MENU_SHELL(help_menu), item);
-    gtk_menu_item_set_submenu(GTK_MENU_ITEM(help_item), help_menu);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), help_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
     return menubar;
 }
