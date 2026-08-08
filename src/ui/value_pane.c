@@ -43,15 +43,67 @@ struct _LrValuePane
     GtkTreeStore *json_store;
     char *current_basename; /* 当前配置文件 basename（用于 man 5 查询） */
     char *current_name;     /* 当前选中配置项名（用于过滤段落） */
-    GHashTable *man_cache;  /* "basename\x01name" → 过滤后的说明文本 */
+    GHashTable *man_pages;  /* basename → ManPage*（整页文本 + 是否有页） */
 };
 
-/* 一次 man 查询请求（key 为 "basename\x01name"），作为异步回调上下文 */
+/* 一个配置文件的 man 页缓存（整页文本 + 是否存在该页） */
+typedef struct
+{
+    gchar *text;    /* man 5 输出整页文本（found 为 TRUE 时） */
+    gboolean found; /* 该文件是否有 man 页 */
+} ManPage;
+
+/* 一次 man 查询请求（携带发起时的文件名与配置项名，避免异步竞态） */
 typedef struct
 {
     LrValuePane *self;
-    gchar *key;
+    gchar *basename;
+    gchar *name;
 } ManRequest;
+
+static void
+man_page_free(gpointer p)
+{
+    ManPage *mp = p;
+    if (mp == NULL)
+        return;
+    g_free(mp->text);
+    g_free(mp);
+}
+
+/* 从 man 页文本中提取以配置项名开头的段落；返回新分配文本，未找到返回 NULL */
+static gchar *
+filter_man_paragraphs(const char *page, const char *name)
+{
+    gchar **paras = g_strsplit(page, "\n\n", -1);
+    GString *result = g_string_new(NULL);
+    gchar *out = NULL;
+    guint i;
+    gsize n = strlen(name);
+
+    for (i = 0; paras[i] != NULL; i++)
+    {
+        const char *p = paras[i];
+
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (strncmp(p, name, n) == 0 &&
+            (p[n] == '\0' || p[n] == '\n' || p[n] == ' ' || p[n] == '\t'))
+        {
+            g_string_append(result, paras[i]);
+            g_string_append(result, "\n\n");
+        }
+    }
+    g_strfreev(paras);
+
+    if (result->len > 0)
+    {
+        g_strstrip(result->str);
+        out = g_strdup(result->str);
+    }
+    g_string_free(result, TRUE);
+    return out;
+}
 
 static void
 on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
@@ -62,80 +114,67 @@ on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
     GBytes *out = NULL, *err_out = NULL;
     GError *error = NULL;
     GtkTextBuffer *buf = gtk_text_view_get_buffer(self->info_text);
-    gchar *final_text = NULL;
+    gboolean is_current = g_strcmp0(self->current_basename, req->basename) == 0 &&
+                          g_strcmp0(self->current_name, req->name) == 0;
 
     if (!g_subprocess_communicate_finish(proc, res, &out, &err_out, &error))
     {
-        final_text = g_strdup("man 查询失败。");
         g_clear_error(&error);
-    }
-    else if (out != NULL)
-    {
-        gsize len = 0;
-        const gchar *data = g_bytes_get_data(out, &len);
-        if (len > 0 && self->current_name != NULL)
+        /* 失败：缓存负面结果，避免反复重试 */
+        if (!g_hash_table_contains(self->man_pages, req->basename))
         {
-            /* 按段落过滤：只保留以当前配置项名开头的段落 */
-            gchar **paras = g_strsplit(data, "\n\n", -1);
-            GString *result = g_string_new(NULL);
-            guint i;
+            ManPage *mp = g_new0(ManPage, 1);
+            mp->found = FALSE;
+            g_hash_table_insert(self->man_pages, g_strdup(req->basename), mp);
+        }
+        if (is_current)
+            gtk_text_buffer_set_text(buf, "man 查询失败。", -1);
+    }
+    else if (out != NULL && g_bytes_get_size(out) > 0)
+    {
+        gsize len = g_bytes_get_size(out);
+        const gchar *data = g_bytes_get_data(out, &len);
+        ManPage *mp;
 
-            for (i = 0; paras[i] != NULL; i++)
+        /* 整页文本缓存（按 basename）：供该文件所有配置项共享一次拉取 */
+        mp = g_new0(ManPage, 1);
+        mp->found = TRUE;
+        mp->text = g_strndup(data, (gsize)MIN(len, G_MAXINT));
+        g_hash_table_replace(self->man_pages, g_strdup(req->basename), mp);
+
+        /* 仅当仍是最新请求时才写面板 */
+        if (is_current)
+        {
+            gchar *filtered = filter_man_paragraphs(mp->text, req->name);
+            if (filtered != NULL)
             {
-                const char *p = paras[i];
-                gsize n = strlen(self->current_name);
-
-                while (*p == ' ' || *p == '\t')
-                    p++;
-                if (strncmp(p, self->current_name, n) == 0 &&
-                    (p[n] == '\0' || p[n] == '\n' || p[n] == ' ' ||
-                     p[n] == '\t'))
-                {
-                    g_string_append(result, paras[i]);
-                    g_string_append(result, "\n\n");
-                }
-            }
-            g_strfreev(paras);
-
-            if (result->len > 0)
-            {
-                g_strstrip(result->str);
-                final_text = g_strdup(result->str);
+                gtk_text_buffer_set_text(buf, filtered, -1);
+                g_free(filtered);
             }
             else
             {
-                final_text = g_strdup_printf("未找到「%s」的说明。",
-                                             self->current_name);
+                gchar *msg = g_strdup_printf("未找到「%s」的说明。", req->name);
+                gtk_text_buffer_set_text(buf, msg, -1);
+                g_free(msg);
             }
-            g_string_free(result, TRUE);
-        }
-        else if (len > 0)
-        {
-            final_text = g_strndup(data, (gsize)MIN(len, G_MAXINT));
-        }
-        else
-        {
-            final_text = g_strdup("未找到该名称的 man 手册页。");
         }
     }
     else
     {
-        final_text = g_strdup("未找到该名称的 man 手册页。");
+        /* 无 man 页：缓存负面结果，下次直接提示不再启动进程 */
+        if (!g_hash_table_contains(self->man_pages, req->basename))
+        {
+            ManPage *mp = g_new0(ManPage, 1);
+            mp->found = FALSE;
+            g_hash_table_insert(self->man_pages, g_strdup(req->basename), mp);
+        }
+        if (is_current)
+            gtk_text_buffer_set_text(buf, "未找到该名称的 man 手册页。", -1);
     }
 
-    gtk_text_buffer_set_text(buf, final_text, -1);
-
-    /* 缓存成功结果，避免来回切换反复启动 man 子进程 */
-    if (req->key != NULL && final_text != NULL)
-    {
-        if (g_hash_table_size(self->man_cache) > 64)
-            g_hash_table_remove_all(self->man_cache);
-        g_hash_table_replace(self->man_cache, req->key, g_strdup(final_text));
-        req->key = NULL; /* 所有权已转移给缓存表 */
-    }
-    g_free(req->key);
+    g_free(req->basename);
+    g_free(req->name);
     g_free(req);
-    g_free(final_text);
 
     g_clear_pointer(&out, g_bytes_unref);
     g_clear_pointer(&err_out, g_bytes_unref);
@@ -145,11 +184,12 @@ on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
 static void
 lr_value_pane_show_man(LrValuePane *self, const char *name)
 {
-    gchar *quoted, *cmd, *key;
-    const gchar *cached;
+    gchar *quoted, *cmd;
     GError *error = NULL;
     GSubprocess *proc;
     ManRequest *req;
+    ManPage *mp;
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(self->info_text);
     gchar *title = g_strdup_printf("说明：%s（man 5 %s）", name,
                                    self->current_basename != NULL
                                        ? self->current_basename
@@ -163,24 +203,37 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
 
     if (self->current_basename == NULL)
     {
-        gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
-                                 "无法确定配置文件名。", -1);
+        gtk_text_buffer_set_text(buf, "无法确定配置文件名。", -1);
         return;
     }
 
-    /* 缓存命中：直接显示，不再启动 man 子进程 */
-    key = g_strdup_printf("%s\x01%s", self->current_basename, name);
-    cached = g_hash_table_lookup(self->man_cache, key);
-    if (cached != NULL)
+    /* 整页缓存（按 basename）命中：内存过滤显示，不再启动 man 子进程 */
+    mp = g_hash_table_lookup(self->man_pages, self->current_basename);
+    if (mp != NULL)
     {
-        gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
-                                 cached, -1);
-        g_free(key);
+        if (mp->found)
+        {
+            gchar *filtered = filter_man_paragraphs(mp->text, name);
+            if (filtered != NULL)
+            {
+                gtk_text_buffer_set_text(buf, filtered, -1);
+                g_free(filtered);
+            }
+            else
+            {
+                gchar *msg = g_strdup_printf("未找到「%s」的说明。", name);
+                gtk_text_buffer_set_text(buf, msg, -1);
+                g_free(msg);
+            }
+        }
+        else
+        {
+            gtk_text_buffer_set_text(buf, "未找到该名称的 man 手册页。", -1);
+        }
         return;
     }
 
-    gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
-                             "正在查询 man ...", -1);
+    gtk_text_buffer_set_text(buf, "正在查询 man ...", -1);
 
     quoted = g_shell_quote(self->current_basename);
     cmd = g_strdup_printf("man 5 %s 2>/dev/null | col -b", quoted);
@@ -192,17 +245,16 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
 
     if (proc == NULL)
     {
-        gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->info_text),
-                                 "无法启动 man 查询。", -1);
+        gtk_text_buffer_set_text(buf, "无法启动 man 查询。", -1);
         g_clear_error(&error);
-        g_free(key);
         return;
     }
 
-    /* 每个请求携带独立 key，避免异步回调间的竞态 */
+    /* 请求携带发起时的文件名与配置项名：回调据此过滤并判断是否仍是最新 */
     req = g_new0(ManRequest, 1);
     req->self = self;
-    req->key = key;
+    req->basename = g_strdup(self->current_basename);
+    req->name = g_strdup(name);
     g_subprocess_communicate_async(proc, NULL, NULL, on_man_done, req);
 }
 
@@ -595,8 +647,8 @@ lr_value_pane_new(void)
     GtkWidget *scrolled;
     GtkWidget *label;
 
-    self->man_cache = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                            g_free, g_free);
+    self->man_pages = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                            man_page_free);
 
     self->widget = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
 
@@ -725,6 +777,6 @@ void lr_value_pane_free(LrValuePane *self)
         return;
     g_free(self->current_basename);
     g_free(self->current_name);
-    g_hash_table_destroy(self->man_cache);
+    g_hash_table_destroy(self->man_pages);
     g_free(self);
 }
