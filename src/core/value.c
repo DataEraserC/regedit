@@ -76,12 +76,12 @@ lr_value_type_name(LrValueType type)
     switch (type)
     {
     case LR_VALUE_NUMBER:
-        return "数字";
+        return "Number";
     case LR_VALUE_BOOL:
-        return "布尔值";
+        return "Boolean";
     case LR_VALUE_STRING:
     default:
-        return "字符串";
+        return "String";
     }
 }
 

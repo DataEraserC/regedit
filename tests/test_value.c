@@ -30,7 +30,7 @@ void test_value_types(void)
     TEST_ASSERT(lr_value_detect_type("192.168.1.1") == LR_VALUE_STRING);
 
     /* 类型显示名 */
-    TEST_ASSERT_STR_EQ(lr_value_type_name(LR_VALUE_NUMBER), "数字");
-    TEST_ASSERT_STR_EQ(lr_value_type_name(LR_VALUE_BOOL), "布尔值");
-    TEST_ASSERT_STR_EQ(lr_value_type_name(LR_VALUE_STRING), "字符串");
+    TEST_ASSERT_STR_EQ(lr_value_type_name(LR_VALUE_NUMBER), "Number");
+    TEST_ASSERT_STR_EQ(lr_value_type_name(LR_VALUE_BOOL), "Boolean");
+    TEST_ASSERT_STR_EQ(lr_value_type_name(LR_VALUE_STRING), "String");
 }

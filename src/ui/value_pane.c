@@ -12,25 +12,22 @@ enum
 
 struct _LrValuePane
 {
-    GtkWidget *widget; /* 根容器：GtkBox（信息栏 + 页面栈） */
+    GtkWidget *widget; /* 根容器：GtkBox（页面栈） */
     GtkWidget *stack;  /* GtkStack：empty / table / text */
     GtkWidget *table_page;
     GtkWidget *text_page;
     GtkTreeView *view;
     GtkListStore *store;
     GtkTextView *text;
-    GtkLabel *info_label;
 };
 
 static void
-show_text(LrValuePane *self, const char *path, const char *info,
-          const char *note)
+show_text(LrValuePane *self, const char *path)
 {
     GError *error = NULL;
     gchar *content = NULL;
     gsize length = 0;
     GtkTextBuffer *buf = gtk_text_view_get_buffer(self->text);
-    gchar *full_info;
 
     gtk_text_buffer_set_text(buf, "", -1);
 
@@ -49,39 +46,27 @@ show_text(LrValuePane *self, const char *path, const char *info,
         g_free(content);
     }
 
-    if (note != NULL)
-        full_info = g_strdup_printf("%s　%s", info, note);
-    else
-        full_info = g_strdup(info);
-    gtk_label_set_text(self->info_label, full_info);
-    g_free(full_info);
-
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "text");
 }
 
 void lr_value_pane_load_file(LrValuePane *self, const char *path)
 {
     LrConfigFormat fmt = lr_format_detect(path);
-    gchar *info = g_strdup_printf("路径：%s　格式：%s",
-                                  path, lr_format_name(fmt));
 
     if (!lr_format_supported(fmt))
     {
-        show_text(self, path, info, "（暂不支持该格式，以文本方式查看）");
-        g_free(info);
+        show_text(self, path);
         return;
     }
 
     {
         LrConfigFile *file = lr_parse_config(path);
-        gchar *count_info;
         guint i;
 
         if (!file->parsed)
         {
-            show_text(self, path, info, "（解析失败，以文本方式查看）");
+            show_text(self, path);
             lr_config_file_free(file);
-            g_free(info);
             return;
         }
 
@@ -100,13 +85,8 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
                                -1);
         }
 
-        count_info = g_strdup_printf("%s　共 %u 项", info, file->items->len);
-        gtk_label_set_text(self->info_label, count_info);
-        g_free(count_info);
-
         gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "table");
         lr_config_file_free(file);
-        g_free(info);
     }
 }
 
@@ -126,15 +106,6 @@ lr_value_pane_new(void)
     GtkTreeViewColumn *column;
 
     self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-
-    /* 公共信息栏：路径 + 格式（位于页面栈之上，表格/文本页共用） */
-    self->info_label = GTK_LABEL(gtk_label_new(""));
-    gtk_widget_set_halign(GTK_WIDGET(self->info_label), GTK_ALIGN_START);
-    gtk_widget_set_margin_start(GTK_WIDGET(self->info_label), 6);
-    gtk_widget_set_margin_top(GTK_WIDGET(self->info_label), 4);
-    gtk_widget_set_margin_bottom(GTK_WIDGET(self->info_label), 2);
-    gtk_box_pack_start(GTK_BOX(self->widget),
-                       GTK_WIDGET(self->info_label), FALSE, FALSE, 0);
 
     self->stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(self->stack),
