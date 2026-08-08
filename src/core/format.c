@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include "core/parsers/ini.h"
+#include "core/parsers/keyword.h"
 #include "core/parsers/kv.h"
 #include "core/parsers/systemd.h"
 
@@ -43,6 +44,24 @@ read_head(const char *path, gsize max)
     return content;
 }
 
+/* 判断一行是否为「关键字 + 参数」样式（sshd_config 等）：
+ * 首词以字母/下划线开头，后跟空白，且空白后有非空参数 */
+static gboolean
+is_keyword_line(const char *line)
+{
+    const char *p = line;
+
+    if (!(g_ascii_isalpha(*p) || *p == '_'))
+        return FALSE;
+    while (g_ascii_isalnum(*p) || *p == '_' || *p == '-')
+        p++;
+    if (*p != ' ' && *p != '\t')
+        return FALSE;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    return *p != '\0';
+}
+
 LrConfigFormat
 lr_format_detect(const char *path)
 {
@@ -50,12 +69,14 @@ lr_format_detect(const char *path)
     gchar **lines, **linep;
     gboolean has_section = FALSE;
     gboolean has_kv = FALSE;
+    gboolean has_non_comment = FALSE;
+    gboolean keyword_style = TRUE;
 
     /* 1) systemd unit 扩展名最明确 */
     if (has_systemd_extension(path))
         return LR_FORMAT_SYSTEMD;
 
-    /* 2) 依据内容嗅探 */
+    /* 2) 依据内容嗅探（Linux 配置无法仅凭后缀判断） */
     head = read_head(path, 65536);
     if (head == NULL)
         return LR_FORMAT_UNKNOWN;
@@ -70,6 +91,8 @@ lr_format_detect(const char *path)
         if (*line == '\0' || line[0] == '#' || line[0] == ';')
             continue;
 
+        has_non_comment = TRUE;
+
         if (line[0] == '[' && strchr(line, ']') != NULL)
         {
             has_section = TRUE;
@@ -77,6 +100,8 @@ lr_format_detect(const char *path)
         }
         if (strchr(line, '=') != NULL || strchr(line, ':') != NULL)
             has_kv = TRUE;
+        if (!is_keyword_line(line))
+            keyword_style = FALSE;
     }
 
     g_strfreev(lines);
@@ -85,6 +110,8 @@ lr_format_detect(const char *path)
         return LR_FORMAT_INI;
     if (has_kv)
         return LR_FORMAT_KV;
+    if (has_non_comment && keyword_style)
+        return LR_FORMAT_KEYWORD;
     return LR_FORMAT_UNKNOWN;
 }
 
@@ -99,6 +126,8 @@ lr_format_name(LrConfigFormat fmt)
         return "键值对";
     case LR_FORMAT_SYSTEMD:
         return "systemd unit";
+    case LR_FORMAT_KEYWORD:
+        return "关键字-参数";
     case LR_FORMAT_UNKNOWN:
     default:
         return "未知格式";
@@ -109,7 +138,7 @@ gboolean
 lr_format_supported(LrConfigFormat fmt)
 {
     return fmt == LR_FORMAT_INI || fmt == LR_FORMAT_KV ||
-           fmt == LR_FORMAT_SYSTEMD;
+           fmt == LR_FORMAT_SYSTEMD || fmt == LR_FORMAT_KEYWORD;
 }
 
 LrConfigFile *
@@ -129,6 +158,9 @@ lr_parse_config(const char *path)
         break;
     case LR_FORMAT_SYSTEMD:
         ok = lr_parse_systemd(path, file);
+        break;
+    case LR_FORMAT_KEYWORD:
+        ok = lr_parse_keyword(path, file);
         break;
     default:
         file->parsed = FALSE;

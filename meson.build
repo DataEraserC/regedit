@@ -17,6 +17,7 @@ lr_core_sources = files(
   'src/core/parsers/ini.c',
   'src/core/parsers/kv.c',
   'src/core/parsers/systemd.c',
+  'src/core/parsers/keyword.c',
 )
 
 lr_core_inc = include_directories('src')

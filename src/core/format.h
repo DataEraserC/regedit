@@ -11,6 +11,7 @@ typedef enum
     LR_FORMAT_INI,         /* INI：分节键值对 */
     LR_FORMAT_KV,          /* 扁平 key=value */
     LR_FORMAT_SYSTEMD,     /* systemd unit 文件 */
+    LR_FORMAT_KEYWORD,     /* 关键字-参数（空白分隔），如 sshd_config */
 } LrConfigFormat;
 
 /* 根据文件名与文件内容启发式判断格式 */
