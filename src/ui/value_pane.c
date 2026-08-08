@@ -353,7 +353,6 @@ lr_value_pane_new(void)
     renderer = gtk_cell_renderer_text_new();
     gtk_tree_view_column_pack_start(column, renderer, TRUE);
     gtk_tree_view_column_add_attribute(column, renderer, "text", COL_DATA);
-    gtk_tree_view_column_set_expand(column, TRUE);
     gtk_tree_view_append_column(self->view, column);
 
     column = gtk_tree_view_column_new();
@@ -363,7 +362,6 @@ lr_value_pane_new(void)
     g_object_set(renderer, "foreground", "gray", NULL);
     gtk_tree_view_column_pack_start(column, renderer, TRUE);
     gtk_tree_view_column_add_attribute(column, renderer, "text", COL_COMMENT);
-    gtk_tree_view_column_set_expand(column, TRUE);
     gtk_tree_view_append_column(self->view, column);
 
     scrolled = gtk_scrolled_window_new(NULL, NULL);
