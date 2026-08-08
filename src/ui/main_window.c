@@ -289,6 +289,14 @@ on_configure_event(GtkWidget *widget, GdkEventConfigure *event,
     self->saved_x = event->x;
     self->saved_y = event->y;
 
+    /* 非最大化时同步记录当前尺寸：纯拖动调整大小也会更新，而不只靠
+     * window-state-event（该信号仅在最大化状态切换时触发） */
+    if (!self->saved_maximized && event->width > 0 && event->height > 0)
+    {
+        self->saved_w = event->width;
+        self->saved_h = event->height;
+    }
+
     if (self->save_timeout != 0)
         g_source_remove(self->save_timeout);
     self->save_timeout = g_timeout_add(500, on_save_timeout, self);
