@@ -96,6 +96,7 @@ lr_config_item_new(const char *key, const char *data,
     item->type = type;
     item->section = g_strdup(section);
     item->comment = g_strdup(comment);
+    item->enabled = TRUE;
     return item;
 }
 

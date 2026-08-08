@@ -139,6 +139,7 @@ void test_parsers(void)
     {
         gchar *p = write_tmp("lr-test-5.conf",
                              "# 注释行\n"
+                             "#Port 22\n"
                              "Include /etc/ssh/sshd_config.d/*.conf\n"
                              "KbdInteractiveAuthentication no\n"
                              "Port 22\n"
@@ -147,25 +148,33 @@ void test_parsers(void)
 
         TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_KEYWORD);
         TEST_ASSERT(f->parsed);
-        TEST_ASSERT(f->items->len == 4);
+        TEST_ASSERT(f->items->len == 5);
 
+        /* 被注释的配置：#Port 22 → Port 未启用 */
         LrConfigItem *it = g_ptr_array_index(f->items, 0);
+        TEST_ASSERT_STR_EQ(it->key, "Port");
+        TEST_ASSERT_STR_EQ(it->data, "22");
+        TEST_ASSERT(it->type == LR_VALUE_NUMBER);
+        TEST_ASSERT(!it->enabled);
+
+        it = g_ptr_array_index(f->items, 1);
         TEST_ASSERT_STR_EQ(it->key, "Include");
         TEST_ASSERT_STR_EQ(it->data, "/etc/ssh/sshd_config.d/*.conf");
         TEST_ASSERT(it->type == LR_VALUE_STRING);
+        TEST_ASSERT(it->enabled);
 
-        it = g_ptr_array_index(f->items, 1);
+        it = g_ptr_array_index(f->items, 2);
         TEST_ASSERT_STR_EQ(it->key, "KbdInteractiveAuthentication");
         TEST_ASSERT_STR_EQ(it->data, "no");
         TEST_ASSERT(it->type == LR_VALUE_BOOL);
 
-        it = g_ptr_array_index(f->items, 2);
+        it = g_ptr_array_index(f->items, 3);
         TEST_ASSERT_STR_EQ(it->key, "Port");
         TEST_ASSERT_STR_EQ(it->data, "22");
         TEST_ASSERT(it->type == LR_VALUE_NUMBER);
 
         /* Tab 分隔 */
-        it = g_ptr_array_index(f->items, 3);
+        it = g_ptr_array_index(f->items, 4);
         TEST_ASSERT_STR_EQ(it->key, "Subsystem");
         TEST_ASSERT_STR_EQ(it->data, "sftp /usr/lib/openssh/sftp-server");
 

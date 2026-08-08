@@ -3,7 +3,8 @@
 
 enum
 {
-    COL_NAME = 0,
+    COL_ENABLED = 0,
+    COL_NAME,
     COL_TYPE,
     COL_DATA,
     COL_COMMENT,
@@ -78,6 +79,7 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
 
             gtk_list_store_append(self->store, &iter);
             gtk_list_store_set(self->store, &iter,
+                               COL_ENABLED, item->enabled ? "true" : "false",
                                COL_NAME, item->key,
                                COL_TYPE, lr_value_type_name(item->type),
                                COL_DATA, item->data,
@@ -120,12 +122,20 @@ lr_value_pane_new(void)
     self->table_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
     self->store = gtk_list_store_new(N_COLS, G_TYPE_STRING, G_TYPE_STRING,
-                                     G_TYPE_STRING, G_TYPE_STRING);
+                                     G_TYPE_STRING, G_TYPE_STRING,
+                                     G_TYPE_STRING);
     self->view = GTK_TREE_VIEW(gtk_tree_view_new_with_model(
         GTK_TREE_MODEL(self->store)));
     g_object_unref(self->store);
 
     gtk_tree_view_set_grid_lines(self->view, GTK_TREE_VIEW_GRID_LINES_VERTICAL);
+
+    column = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(column, "启用");
+    renderer = gtk_cell_renderer_text_new();
+    gtk_tree_view_column_pack_start(column, renderer, FALSE);
+    gtk_tree_view_column_add_attribute(column, renderer, "text", COL_ENABLED);
+    gtk_tree_view_append_column(self->view, column);
 
     column = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(column, "名称");

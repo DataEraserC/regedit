@@ -27,6 +27,7 @@ typedef struct
     char *data;       /* 原始值文本（去引号、去注释后的值） */
     char *section;    /* 所属节，无节为 NULL */
     char *comment;    /* 备注（注释内容），可为 NULL */
+    gboolean enabled; /* 是否启用（被注释的配置为 FALSE） */
 } LrConfigItem;
 
 /* 一个已解析的配置文件（类比一个注册表键下的值集合） */
