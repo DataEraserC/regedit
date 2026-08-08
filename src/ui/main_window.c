@@ -179,6 +179,26 @@ on_location_activate(GtkWidget *widget, gpointer user_data)
     g_free(path);
 }
 
+/* 通过 CSS 降低地址栏输入框高度（更紧凑） */
+static void
+add_location_css(GtkWidget *entry)
+{
+    static GtkCssProvider *css = NULL;
+
+    if (css == NULL)
+    {
+        css = gtk_css_provider_new();
+        gtk_css_provider_load_from_data(
+            css,
+            "#lr-location { min-height: 0; padding: 1px 6px; }",
+            -1, NULL);
+    }
+    gtk_widget_set_name(entry, "lr-location");
+    gtk_style_context_add_provider(
+        gtk_widget_get_style_context(entry), GTK_STYLE_PROVIDER(css),
+        GTK_STYLE_PROVIDER_PRIORITY_USER);
+}
+
 static GtkWidget *
 build_location_bar(LrMainWindow *mw)
 {
@@ -186,12 +206,13 @@ build_location_bar(LrMainWindow *mw)
 
     gtk_widget_set_margin_start(bar, 8);
     gtk_widget_set_margin_end(bar, 8);
-    gtk_widget_set_margin_top(bar, 4);
-    gtk_widget_set_margin_bottom(bar, 4);
+    gtk_widget_set_margin_top(bar, 2);
+    gtk_widget_set_margin_bottom(bar, 2);
 
     mw->location_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(mw->location_entry),
                                    "输入路径后回车跳转");
+    add_location_css(mw->location_entry);
     gtk_box_pack_start(GTK_BOX(bar), mw->location_entry, TRUE, TRUE, 0);
 
     g_signal_connect(mw->location_entry, "activate",
@@ -206,7 +227,7 @@ lr_main_window_new(void)
     GtkWidget *vbox, *menubar, *location_bar, *paned;
 
     mw->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(mw->window), "linux-regedit");
+    gtk_window_set_title(GTK_WINDOW(mw->window), "注册表编辑器");
     gtk_window_set_default_size(GTK_WINDOW(mw->window), 920, 600);
     gtk_window_set_position(GTK_WINDOW(mw->window), GTK_WIN_POS_CENTER);
 
