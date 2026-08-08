@@ -163,12 +163,15 @@ void test_parsers(void)
         TEST_ASSERT_STR_EQ(it->data, "22");
         TEST_ASSERT(it->type == LR_VALUE_NUMBER);
         TEST_ASSERT(!it->enabled);
+        /* 上方最近一条说明文字作为备注 */
+        TEST_ASSERT_STR_EQ(it->comment, "注释行");
 
         it = g_ptr_array_index(f->items, 1);
         TEST_ASSERT_STR_EQ(it->key, "Include");
         TEST_ASSERT_STR_EQ(it->data, "/etc/ssh/sshd_config.d/*.conf");
         TEST_ASSERT(it->type == LR_VALUE_STRING);
         TEST_ASSERT(it->enabled);
+        TEST_ASSERT_STR_EQ(it->comment, "注释行");
 
         it = g_ptr_array_index(f->items, 2);
         TEST_ASSERT_STR_EQ(it->key, "KbdInteractiveAuthentication");

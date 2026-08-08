@@ -35,6 +35,7 @@ lr_parse_keyword(const char *path, LrConfigFile *file)
     GError *error = NULL;
     gchar **lines = NULL;
     gchar **linep;
+    char *pending_comment = NULL;
 
     if (!g_file_get_contents(path, &content, &length, &error))
     {
@@ -60,10 +61,6 @@ lr_parse_keyword(const char *path, LrConfigFile *file)
 
         if (line[0] == '#')
         {
-            /* 猜测是否为被注释的配置：
-             * 剥离 # 后匹配「关键字 + 单 token 参数」——值不含空白，
-             * 从而与说明文字（长句）区分开，如 "#Port 22" 是配置而
-             * "# This is the sshd server..." 是说明 */
             char *p = line;
             char *sp;
 
@@ -72,18 +69,33 @@ lr_parse_keyword(const char *path, LrConfigFile *file)
             content = g_strstrip(p);
             if (*content == '\0')
                 continue;
-            if (!(g_ascii_isalpha(content[0]) || content[0] == '_'))
-                continue;
 
-            sp = strchr(content, ' ');
-            if (sp == NULL)
-                sp = strchr(content, '\t');
-            if (sp == NULL)
+            /* 被注释的配置：关键字 + 单 token 参数（如 #Port 22） */
+            if (g_ascii_isalpha(content[0]) || content[0] == '_')
+            {
+                sp = strchr(content, ' ');
+                if (sp == NULL)
+                    sp = strchr(content, '\t');
+                if (sp != NULL && strchr(sp + 1, ' ') == NULL &&
+                    strchr(sp + 1, '\t') == NULL)
+                {
+                    commented = TRUE; /* 是被注释的配置 */
+                }
+                else
+                {
+                    /* 说明文字：记录为「上方最近一条」注释 */
+                    g_free(pending_comment);
+                    pending_comment = g_strdup(content);
+                    continue;
+                }
+            }
+            else
+            {
+                /* 说明文字 */
+                g_free(pending_comment);
+                pending_comment = g_strdup(content);
                 continue;
-            /* 参数部分若含空白则视为说明文字，忽略 */
-            if (strchr(sp + 1, ' ') != NULL || strchr(sp + 1, '\t') != NULL)
-                continue;
-            commented = TRUE;
+            }
         }
         else
         {
@@ -108,7 +120,7 @@ lr_parse_keyword(const char *path, LrConfigFile *file)
         {
             char *norm = collapse_whitespace(value);
             LrConfigItem *item = lr_config_item_new(
-                key, norm, lr_value_detect_type(norm), NULL, NULL);
+                key, norm, lr_value_detect_type(norm), NULL, pending_comment);
             item->enabled = !commented;
             g_ptr_array_add(file->items, item);
             g_free(norm);
@@ -117,5 +129,6 @@ lr_parse_keyword(const char *path, LrConfigFile *file)
     }
 
     g_strfreev(lines);
+    g_free(pending_comment);
     return file->parsed;
 }
