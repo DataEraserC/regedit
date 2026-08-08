@@ -704,6 +704,11 @@ lr_value_pane_new(void)
     gtk_text_view_set_editable(self->text, FALSE);
     gtk_text_view_set_cursor_visible(self->text, FALSE);
     gtk_text_view_set_wrap_mode(self->text, GTK_WRAP_WORD_CHAR);
+    /* 文本内容与面板四周留出边距 */
+    gtk_text_view_set_left_margin(self->text, 8);
+    gtk_text_view_set_right_margin(self->text, 8);
+    gtk_text_view_set_top_margin(self->text, 6);
+    gtk_text_view_set_bottom_margin(self->text, 6);
 
     scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),

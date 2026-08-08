@@ -15,6 +15,9 @@ LrTreePane *lr_tree_pane_new(void);
 /* 获取面板顶层 widget（GtkScrolledWindow） */
 GtkWidget *lr_tree_pane_get_widget(LrTreePane *self);
 
+/* 将键盘焦点移到树视图 */
+void lr_tree_pane_focus(LrTreePane *self);
+
 /* 设置选中回调 */
 void lr_tree_pane_set_select_cb(LrTreePane *self, LrTreePaneSelectCb cb,
                                 gpointer user_data);

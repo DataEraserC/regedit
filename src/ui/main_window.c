@@ -9,6 +9,7 @@ struct _LrMainWindow
     LrTreePane *tree;
     LrValuePane *value;
     GtkWidget *location_entry;
+    GtkWidget *location_bar;  /* 地址栏容器（查看→地址栏 切换） */
     char *current_path;       /* 当前打开/选中的路径 */
     char *pending_path;       /* 恢复状态时待定位的路径 */
     LrWindowState *win_state; /* 窗口几何与上次路径状态 */
@@ -63,6 +64,30 @@ on_refresh(GtkWidget *widget, gpointer user_data)
     lr_tree_pane_refresh(mw->tree);
 }
 
+/* 查看→地址栏：勾选切换地址栏显示/隐藏 */
+static void
+on_toggle_location_bar(GtkCheckMenuItem *item, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    gboolean active = gtk_check_menu_item_get_active(item);
+    if (mw->location_bar != NULL)
+        gtk_widget_set_visible(mw->location_bar, active);
+}
+
+/* 编辑→复制项名称：把当前路径复制到剪贴板 */
+static void
+on_copy_item_name(GtkWidget *widget, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    GtkClipboard *clip;
+    (void)widget;
+
+    if (mw->current_path == NULL)
+        return;
+    clip = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+    gtk_clipboard_set_text(clip, mw->current_path, -1);
+}
+
 static void
 on_quit(GtkWidget *widget, gpointer user_data)
 {
@@ -93,76 +118,122 @@ on_about(GtkWidget *widget, gpointer user_data)
     gtk_widget_destroy(dialog);
 }
 
-static void
-on_expand_all(GtkWidget *widget, gpointer user_data)
-{
-    LrMainWindow *mw = user_data;
-    (void)widget;
-    lr_tree_pane_expand_all(mw->tree);
-}
-
-static void
-on_collapse_all(GtkWidget *widget, gpointer user_data)
-{
-    LrMainWindow *mw = user_data;
-    (void)widget;
-    lr_tree_pane_collapse_all(mw->tree);
-}
-
 static GtkWidget *
 build_menubar(LrMainWindow *mw)
 {
     GtkWidget *menubar = gtk_menu_bar_new();
     GtkWidget *menu, *menu_item, *item;
 
-    /* 文件 */
+    /* 文件：导入 / 导出 / 打印 / 退出 */
     menu_item = gtk_menu_item_new_with_label("文件");
     menu = gtk_menu_new();
-    item = gtk_menu_item_new_with_label("刷新");
-    g_signal_connect(item, "activate", G_CALLBACK(on_refresh), mw);
+
+    item = gtk_menu_item_new_with_label("导入…");
+    gtk_widget_set_sensitive(item, FALSE); /* 占位 */
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("导出…");
+    gtk_widget_set_sensitive(item, FALSE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("打印…");
+    gtk_widget_set_sensitive(item, FALSE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
     item = gtk_separator_menu_item_new();
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
     item = gtk_menu_item_new_with_label("退出");
     g_signal_connect(item, "activate", G_CALLBACK(on_quit), mw->window);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
-    /* 编辑 */
+    /* 编辑：新建 / 权限 / 删除 / 重命名 / 复制项名称 / 查找 / 查找下一个 */
     menu_item = gtk_menu_item_new_with_label("编辑");
     menu = gtk_menu_new();
-    item = gtk_menu_item_new_with_label("查找…");
-    gtk_widget_set_sensitive(item, FALSE); /* v0.2 实现 */
+
+    item = gtk_menu_item_new_with_label("新建");
+    gtk_widget_set_sensitive(item, FALSE);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("权限…");
+    gtk_widget_set_sensitive(item, FALSE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("删除");
+    gtk_widget_set_sensitive(item, FALSE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("重命名");
+    gtk_widget_set_sensitive(item, FALSE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("复制项名称");
+    g_signal_connect(item, "activate", G_CALLBACK(on_copy_item_name), mw);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("查找…");
+    gtk_widget_set_sensitive(item, FALSE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("查找下一个");
+    gtk_widget_set_sensitive(item, FALSE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
-    /* 查看 */
+    /* 查看：地址栏 / 拆分 / 刷新 / 字体 */
     menu_item = gtk_menu_item_new_with_label("查看");
     menu = gtk_menu_new();
-    item = gtk_menu_item_new_with_label("展开全部");
-    g_signal_connect(item, "activate", G_CALLBACK(on_expand_all), mw);
+
+    item = gtk_check_menu_item_new_with_label("地址栏");
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(item), TRUE);
+    g_signal_connect(item, "toggled", G_CALLBACK(on_toggle_location_bar), mw);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-    item = gtk_menu_item_new_with_label("收起全部");
-    g_signal_connect(item, "activate", G_CALLBACK(on_collapse_all), mw);
+
+    item = gtk_menu_item_new_with_label("拆分");
+    gtk_widget_set_sensitive(item, FALSE);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("刷新");
+    g_signal_connect(item, "activate", G_CALLBACK(on_refresh), mw);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("字体…");
+    gtk_widget_set_sensitive(item, FALSE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
     /* 收藏夹 */
     menu_item = gtk_menu_item_new_with_label("收藏夹");
     menu = gtk_menu_new();
-    item = gtk_menu_item_new_with_label("添加到收藏夹…");
-    gtk_widget_set_sensitive(item, FALSE); /* v0.5 实现 */
+
+    item = gtk_menu_item_new_with_label("添加到收藏夹");
+    gtk_widget_set_sensitive(item, FALSE);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label("删除收藏夹");
+    gtk_widget_set_sensitive(item, FALSE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
     /* 帮助 */
     menu_item = gtk_menu_item_new_with_label("帮助");
     menu = gtk_menu_new();
-    item = gtk_menu_item_new_with_label("关于");
+    item = gtk_menu_item_new_with_label("关于注册表编辑器");
     g_signal_connect(item, "activate", G_CALLBACK(on_about), mw->window);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
@@ -231,6 +302,7 @@ build_location_bar(LrMainWindow *mw)
     gtk_widget_set_margin_top(bar, 2);
     gtk_widget_set_margin_bottom(bar, 2);
 
+    mw->location_bar = bar;
     mw->location_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(mw->location_entry),
                                    "输入路径后回车跳转");
@@ -287,6 +359,15 @@ on_reveal_path_idle(gpointer user_data)
     if (self->pending_path != NULL)
         lr_tree_pane_reveal_path(self->tree, self->pending_path);
     g_clear_pointer(&self->pending_path, g_free);
+    return G_SOURCE_REMOVE;
+}
+
+/* 窗口显示后把键盘焦点给树视图（避免默认聚焦到地址栏输入框） */
+static gboolean
+on_focus_tree_idle(gpointer user_data)
+{
+    LrMainWindow *self = user_data;
+    lr_tree_pane_focus(self->tree);
     return G_SOURCE_REMOVE;
 }
 
@@ -366,6 +447,9 @@ lr_main_window_new(void)
     gtk_container_add(GTK_CONTAINER(mw->window), vbox);
 
     lr_tree_pane_set_select_cb(mw->tree, on_tree_select, mw);
+
+    /* 窗口显示（show_all）后主循环首个 idle 即把焦点给树视图 */
+    g_idle_add(on_focus_tree_idle, mw);
 
     return mw;
 }

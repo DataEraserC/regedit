@@ -504,6 +504,8 @@ lr_tree_pane_new(void)
 
     pix = gtk_cell_renderer_pixbuf_new();
     txt = gtk_cell_renderer_text_new();
+    /* 图标与文字之间留出间隔 */
+    g_object_set(pix, "xpad", 6, NULL);
     col = gtk_tree_view_column_new();
     gtk_tree_view_column_pack_start(col, pix, FALSE);
     gtk_tree_view_column_pack_start(col, txt, TRUE);
@@ -534,6 +536,11 @@ GtkWidget *
 lr_tree_pane_get_widget(LrTreePane *self)
 {
     return self->widget;
+}
+
+void lr_tree_pane_focus(LrTreePane *self)
+{
+    gtk_widget_grab_focus(GTK_WIDGET(self->view));
 }
 
 void lr_tree_pane_set_select_cb(LrTreePane *self, LrTreePaneSelectCb cb,
