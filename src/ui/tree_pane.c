@@ -165,6 +165,11 @@ on_row_expanded(GtkTreeView *view, GtkTreeIter *iter, GtkTreePath *tpath,
         return;
     }
 
+    /* 先填充真实子节点，再移除占位 dummy。
+     * 顺序不能颠倒：若先删 dummy，该行会瞬间“无子节点”，
+     * GtkTreeView 会因此自动折叠，导致首次需两次展开的 bug。 */
+    fill_children(self, iter, dirpath);
+
     /* 移除占位的 dummy 子节点（若有） */
     if (gtk_tree_model_iter_children(GTK_TREE_MODEL(self->store), &child,
                                      iter))
@@ -177,7 +182,6 @@ on_row_expanded(GtkTreeView *view, GtkTreeIter *iter, GtkTreePath *tpath,
         g_free(cpath);
     }
 
-    fill_children(self, iter, dirpath);
     g_free(dirpath);
 }
 
@@ -320,33 +324,33 @@ show_popup_menu(LrTreePane *self, GtkTreePath *path, GdkEventButton *event)
 
         item = gtk_menu_item_new_with_label("新建");
         g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                         (gpointer)"新建");
+                         (gpointer) "新建");
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     }
 
     item = gtk_menu_item_new_with_label("查找");
     g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer)"查找");
+                     (gpointer) "查找");
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     item = gtk_menu_item_new_with_label("删除");
     g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer)"删除");
+                     (gpointer) "删除");
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     item = gtk_menu_item_new_with_label("重命名");
     g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer)"重命名");
+                     (gpointer) "重命名");
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     item = gtk_menu_item_new_with_label("导出");
     g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer)"导出");
+                     (gpointer) "导出");
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     item = gtk_menu_item_new_with_label("权限");
     g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer)"权限");
+                     (gpointer) "权限");
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     item = gtk_separator_menu_item_new();
@@ -504,6 +508,10 @@ ensure_children_loaded(LrTreePane *self, GtkTreeIter *iter)
         return;
     }
 
+    /* 与 on_row_expanded 相同：先填真实子节点，再移除占位 dummy，
+     * 避免中途“无子节点”触发自动折叠 */
+    fill_children(self, iter, dirpath);
+
     if (gtk_tree_model_iter_children(model, &child, iter))
     {
         gchar *cpath = NULL;
@@ -513,7 +521,6 @@ ensure_children_loaded(LrTreePane *self, GtkTreeIter *iter)
         g_free(cpath);
     }
 
-    fill_children(self, iter, dirpath);
     g_free(dirpath);
 }
 
