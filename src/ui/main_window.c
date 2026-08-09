@@ -179,8 +179,10 @@ on_about(GtkWidget *widget, gpointer user_data)
 
     (void)widget;
 
-    dialog = gtk_dialog_new_with_buttons("关于注册表编辑器", NULL, 0, "确定",
+    dialog = gtk_dialog_new_with_buttons("关于“注册表编辑器”", NULL, 0, "确定",
                                          GTK_RESPONSE_CLOSE, NULL);
+    /* 关于窗口宽度设窄一些 */
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 760, -1);
     content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
     vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_set_border_width(GTK_CONTAINER(vbox), 20);
@@ -209,8 +211,9 @@ on_about(GtkWidget *widget, gpointer user_data)
     }
     session = g_strdup(g_getenv("XDG_SESSION_TYPE"));
     if (session == NULL || *session == '\0')
-        session = g_strdup(g_getenv("WAYLAND_DISPLAY") != NULL   ? "wayland"
-                           : g_getenv("DISPLAY") != NULL ? "x11" : "未知");
+        session = g_strdup(g_getenv("WAYLAND_DISPLAY") != NULL ? "wayland"
+                           : g_getenv("DISPLAY") != NULL       ? "x11"
+                                                               : "未知");
     user = g_strdup(g_get_user_name());
 
     /* 顶部：放大 3 倍的系统图标 + 系统名（无“注册表编辑器”字样） */
@@ -220,6 +223,7 @@ on_about(GtkWidget *widget, gpointer user_data)
         g_object_unref(icon);
 
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+    gtk_widget_set_halign(hbox, GTK_ALIGN_CENTER);
     gtk_box_pack_start(GTK_BOX(hbox), img, FALSE, FALSE, 0);
 
     label = gtk_label_new(NULL);
@@ -250,13 +254,18 @@ on_about(GtkWidget *widget, gpointer user_data)
     right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_box_pack_start(GTK_BOX(hbox), right, TRUE, TRUE, 0);
 
-    /* 行1：系统名（无版本）+ GNU/Linux */
-    tmp = g_strdup_printf("%s GNU/Linux", name != NULL ? name : "Linux");
+    /* 行1：GNU/Linux + 系统名（无版本） */
+    tmp = g_strdup_printf("GNU/Linux %s", name != NULL ? name : "Linux");
     about_add_line(right, tmp);
     g_free(tmp);
 
-    /* 行2：版本 + 系统版本（内核/init/图形服务器） */
-    tmp = g_strdup_printf("版本 %s（系统版本：Linux %s，%s，%s）",
+    /* 行2：版本 + 系统信息（内核/init/图形服务器）；去掉版本代号括号 */
+    {
+        gchar *paren = strstr(version, " (");
+        if (paren != NULL)
+            *paren = '\0';
+    }
+    tmp = g_strdup_printf("版本 %s（Linux %s，%s，%s）",
                           version, kernel, init_prog, session);
     about_add_line(right, tmp);
     g_free(tmp);
@@ -283,7 +292,7 @@ on_about(GtkWidget *widget, gpointer user_data)
                            0);
 
     /* 许可行 */
-    about_add_line(right, "根据开源许可，许可如下用户使用本产品");
+    about_add_line(right, "根据开源许可条款，许可如下用户使用本产品：");
 
     /* 空一行 */
     gtk_box_pack_start(GTK_BOX(right), gtk_label_new(""), FALSE, FALSE, 0);
@@ -295,10 +304,28 @@ on_about(GtkWidget *widget, gpointer user_data)
 
     gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
 
-    /* 确定按钮与窗口边界留边距 */
+    /* 确定按钮与窗口边界留边距，按钮内部左右加内边距 */
     {
+        static GtkCssProvider *ok_css = NULL;
         GtkWidget *action = gtk_dialog_get_action_area(GTK_DIALOG(dialog));
+        GtkWidget *ok = gtk_dialog_get_widget_for_response(
+            GTK_DIALOG(dialog), GTK_RESPONSE_CLOSE);
+
         gtk_container_set_border_width(GTK_CONTAINER(action), 12);
+
+        if (ok_css == NULL)
+        {
+            ok_css = gtk_css_provider_new();
+            gtk_css_provider_load_from_data(
+                ok_css,
+                "button { padding-left: 36px; padding-right: 36px; }", -1,
+                NULL);
+        }
+        if (ok != NULL)
+            gtk_style_context_add_provider(
+                gtk_widget_get_style_context(ok),
+                GTK_STYLE_PROVIDER(ok_css),
+                GTK_STYLE_PROVIDER_PRIORITY_USER);
     }
 
     /* 清理 */
