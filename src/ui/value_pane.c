@@ -985,6 +985,50 @@ build_data_column(LrValuePane *self)
     gtk_tree_view_append_column(self->view, col);
 }
 
+/* 名称/备注列编辑完成：直接写回表格（不写盘） */
+static void
+on_text_edited(GtkCellRendererText *renderer, const gchar *path,
+               const gchar *new_text, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    gint col = GPOINTER_TO_INT(
+        g_object_get_data(G_OBJECT(renderer), "lr-col"));
+    GtkTreeIter iter;
+    GtkTreePath *tp;
+
+    tp = gtk_tree_path_new_from_string(path);
+    if (gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store), &iter, tp))
+        gtk_tree_store_set(self->store, &iter, col, new_text, -1);
+    gtk_tree_path_free(tp);
+}
+
+/* 可编辑文本列：title 表头，col 模型列，gray 是否灰色前景，width 固定列宽 */
+static void
+build_editable_text_column(LrValuePane *self, const char *title, gint col,
+                           gboolean gray, gint width)
+{
+    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+    GtkTreeViewColumn *column;
+
+    g_object_set(renderer, "editable", TRUE, "ellipsize",
+                 PANGO_ELLIPSIZE_END, NULL);
+    if (gray)
+        g_object_set(renderer, "foreground", "gray", NULL);
+    g_signal_connect(renderer, "edited", G_CALLBACK(on_text_edited), self);
+
+    column = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(column, title);
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    gtk_tree_view_column_set_sizing(column, GTK_TREE_VIEW_COLUMN_FIXED);
+    gtk_tree_view_column_set_fixed_width(column, width);
+    gtk_tree_view_column_pack_start(column, renderer, FALSE);
+    gtk_tree_view_column_add_attribute(column, renderer, "text", col);
+    gtk_tree_view_append_column(self->view, column);
+
+    /* 记录模型列：编辑回调据此写回正确列 */
+    g_object_set_data(G_OBJECT(renderer), "lr-col", GINT_TO_POINTER(col));
+}
+
 /* 右键弹出值面板菜单：新建 → 类型子菜单 */
 static void
 show_value_popup_menu(LrValuePane *self, GdkEventButton *event)
@@ -1055,10 +1099,10 @@ lr_value_pane_new(void)
                      G_CALLBACK(on_value_button_press), self);
 
     build_enabled_column(self);
-    append_text_column(self->view, "名称", COL_NAME, FALSE, FALSE, 213);
+    build_editable_text_column(self, "名称", COL_NAME, FALSE, 213);
     build_type_column(self);
     build_data_column(self);
-    append_text_column(self->view, "备注", COL_COMMENT, FALSE, TRUE, 360);
+    build_editable_text_column(self, "备注", COL_COMMENT, TRUE, 360);
 
     scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
