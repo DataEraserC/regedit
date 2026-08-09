@@ -37,4 +37,7 @@ LrConfigFile *lr_parse_config(const char *path);
 LrConfigFile *lr_parse_config_content(const char *path,
                                       const char *content, gsize len);
 
+/* 新建文件时可选的格式显示名（静态数组，NULL 结尾） */
+const char *const *lr_format_new_file_names(void);
+
 #endif /* LR_CORE_FORMAT_H */

@@ -818,15 +818,12 @@ on_enabled_edited(GtkCellRendererText *renderer, const gchar *path,
     gtk_tree_store_set(self->store, &iter, COL_ENABLED, new_text, -1);
 }
 
-/* 新建一行（仅内存，不写盘） */
-static void
-on_new_value(GtkMenuItem *item, gpointer user_data)
+/* 在表格末尾追加一个配置项（仅内存，不写盘） */
+void
+lr_value_pane_add_value(LrValuePane *self, const char *type)
 {
-    LrValuePane *self = user_data;
-    const gchar *type = gtk_menu_item_get_label(item);
     const gchar *def_name, *def_data;
     GtkTreeIter iter;
-    (void)item;
 
     if (g_strcmp0(type, "Section") == 0)
     {
@@ -853,6 +850,15 @@ on_new_value(GtkMenuItem *item, gpointer user_data)
     gtk_tree_store_set(self->store, &iter, COL_ENABLED, "true", COL_NAME,
                        def_name, COL_TYPE, type, COL_DATA, def_data,
                        COL_COMMENT, "", -1);
+}
+
+/* 新建一行（仅内存，不写盘） */
+static void
+on_new_value(GtkMenuItem *item, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    (void)item;
+    lr_value_pane_add_value(self, gtk_menu_item_get_label(item));
 }
 
 /* 新建 → 子菜单：列出所有可新建的类型（点击即新建一行） */

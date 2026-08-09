@@ -3,6 +3,7 @@
 #include "ui/favorites.h"
 #include "ui/export.h"
 #include "ui/dialog_utils.h"
+#include "core/format.h"
 
 #include <gtk/gtk.h>
 
@@ -110,6 +111,73 @@ on_about(GtkWidget *widget, gpointer user_data)
     lr_dialog_center_on(dialog, GTK_WINDOW(window));
 }
 
+/* 未实现功能：弹出提示（独立子窗口） */
+static void
+on_new_not_impl(GtkMenuItem *item, gpointer user_data)
+{
+    const gchar *label = user_data;
+    GtkWidget *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(item));
+    GtkWidget *dialog;
+
+    (void)item;
+    dialog = gtk_message_dialog_new(NULL, 0, GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
+                                    "「%s」功能尚未实现，规划于后续版本。",
+                                    label);
+    g_signal_connect(dialog, "response",
+                     G_CALLBACK(lr_dialog_destroy_on_response), NULL);
+    lr_dialog_center_on(dialog, GTK_WINDOW(toplevel));
+}
+
+/* 编辑菜单「新建配置项」：在当前表格追加一行（仅内存） */
+static void
+on_new_value_item(GtkMenuItem *item, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    lr_value_pane_add_value(mw->value, gtk_menu_item_get_label(item));
+}
+
+/* 新建 → 子菜单（编辑菜单，更全面）：文件夹 + 文件格式 + 分割线 + 配置项 */
+static void
+build_new_submenu(LrMainWindow *mw, GtkWidget *menu)
+{
+    const char *const *names;
+    GtkWidget *item;
+    gint i;
+
+    item = gtk_menu_item_new_with_label("文件夹");
+    g_signal_connect(item, "activate", G_CALLBACK(on_new_not_impl),
+                     (gpointer) "新建文件夹");
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    names = lr_format_new_file_names();
+    for (i = 0; names[i] != NULL; i++)
+    {
+        item = gtk_menu_item_new_with_label(names[i]);
+        g_signal_connect(item, "activate", G_CALLBACK(on_new_not_impl),
+                         (gpointer) names[i]);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    }
+
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    /* 配置项：追加到当前表格（仅内存） */
+    {
+        static const gchar *const types[] = {"Section", "String", "Boolean",
+                                             "Number", NULL};
+        for (i = 0; types[i] != NULL; i++)
+        {
+            item = gtk_menu_item_new_with_label(types[i]);
+            g_signal_connect(item, "activate", G_CALLBACK(on_new_value_item),
+                             mw);
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        }
+    }
+}
+
 static GtkWidget *
 build_menubar(LrMainWindow *mw)
 {
@@ -147,7 +215,11 @@ build_menubar(LrMainWindow *mw)
     menu = gtk_menu_new();
 
     item = gtk_menu_item_new_with_label("新建");
-    gtk_widget_set_sensitive(item, FALSE);
+    {
+        GtkWidget *new_sub = gtk_menu_new();
+        build_new_submenu(mw, new_sub);
+        gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), new_sub);
+    }
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     item = gtk_menu_item_new_with_label("权限…");

@@ -362,6 +362,33 @@ on_popup_not_impl(GtkMenuItem *item, gpointer user_data)
     lr_dialog_center_on(dialog, GTK_WINDOW(toplevel));
 }
 
+/* 新建 → 子菜单：文件夹 + 分割线 + 支持的文件格式（未实现，点击提示） */
+static void
+build_new_submenu(LrTreePane *self, GtkWidget *menu)
+{
+    const char *const *names;
+    GtkWidget *item;
+    gint i;
+
+    (void)self;
+    item = gtk_menu_item_new_with_label("文件夹");
+    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
+                     (gpointer) "新建文件夹");
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    names = lr_format_new_file_names();
+    for (i = 0; names[i] != NULL; i++)
+    {
+        item = gtk_menu_item_new_with_label(names[i]);
+        g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
+                         (gpointer) names[i]);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    }
+}
+
 static void
 show_popup_menu(LrTreePane *self, GtkTreePath *path, GdkEventButton *event)
 {
@@ -396,8 +423,11 @@ show_popup_menu(LrTreePane *self, GtkTreePath *path, GdkEventButton *event)
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
         item = gtk_menu_item_new_with_label("新建");
-        g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                         (gpointer) "新建");
+        {
+            GtkWidget *new_sub = gtk_menu_new();
+            build_new_submenu(self, new_sub);
+            gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), new_sub);
+        }
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     }
 

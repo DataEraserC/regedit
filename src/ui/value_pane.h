@@ -17,6 +17,9 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path);
 /* 清空为占位视图 */
 void lr_value_pane_clear(LrValuePane *self);
 
+/* 在表格末尾追加一个配置项（仅内存，不写盘）；type ∈ Section/String/Boolean/Number */
+void lr_value_pane_add_value(LrValuePane *self, const char *type);
+
 void lr_value_pane_free(LrValuePane *self);
 
 #endif /* LR_UI_VALUE_PANE_H */

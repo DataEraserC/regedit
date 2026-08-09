@@ -335,6 +335,24 @@ lr_format_name(LrConfigFormat fmt)
     return "未知格式";
 }
 
+/* 新建文件时可选的格式显示名（静态数组，NULL 结尾） */
+static const char *const k_new_file_names[] = {
+    "INI 文件",
+    "键值对文件",
+    "JSON 文件",
+    "XML 文件",
+    "systemd unit 文件",
+    "apt 配置",
+    "关键字-参数文件",
+    NULL,
+};
+
+const char *const *
+lr_format_new_file_names(void)
+{
+    return k_new_file_names;
+}
+
 gboolean
 lr_format_supported(LrConfigFormat fmt)
 {
