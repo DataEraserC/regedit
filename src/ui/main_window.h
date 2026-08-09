@@ -6,7 +6,20 @@
 #include "ui/tree_pane.h"
 #include "ui/value_pane.h"
 
-typedef struct _LrMainWindow LrMainWindow;
+typedef struct _LrWindowState LrWindowState;
+
+/* 主窗口对象：布局与内部状态（收藏夹/导出等子模块需访问字段） */
+typedef struct _LrMainWindow
+{
+    GtkWidget *window;
+    LrTreePane *tree;
+    LrValuePane *value;
+    GtkWidget *location_entry;
+    GtkWidget *location_bar;  /* 地址栏容器（查看→地址栏 切换） */
+    char *current_path;       /* 当前打开/选中的路径 */
+    char *pending_path;       /* 恢复状态时待定位的路径 */
+    LrWindowState *win_state; /* 窗口几何与上次路径状态 */
+} LrMainWindow;
 
 LrMainWindow *lr_main_window_new(void);
 GtkWidget *lr_main_window_get_window(LrMainWindow *self);

@@ -1,13 +1,9 @@
 #include "core/scanner.h"
+#include "core/limits.h"
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
 #include <string.h>
-
-/* 目录树中视为过大的文件大小阈值（超过则不显示） */
-#define LR_MAX_FILE_SIZE (128 * 1024)
-/* 判断文本文件时探测的字节数 */
-#define LR_TEXT_PROBE_SIZE 1024
 
 void lr_scan_entry_free(LrScanEntry *entry)
 {
@@ -42,17 +38,19 @@ is_oversized(const char *path)
     return st.st_size > LR_MAX_FILE_SIZE;
 }
 
-/* 判断是否为文本文件：读取前 LR_TEXT_PROBE_SIZE 字节，含 NUL 视为非文本 */
+/* 读取文件头部最多 bufsize 字节，返回是否文本（含 NUL 判非文本），
+ * *n 为实际读到的字节数；读取失败仍视为文本（兜底显示）。 */
 static gboolean
-is_text_file(const char *path)
+read_file_head(const char *path, guchar *buf, gsize bufsize, gsize *n)
 {
     GFile *file;
     GFileInputStream *stream;
-    guchar buf[LR_TEXT_PROBE_SIZE];
-    gsize n = 0;
+    gssize r;
     gboolean text = TRUE;
     GError *error = NULL;
+    gsize i;
 
+    *n = 0;
     file = g_file_new_for_path(path);
     stream = g_file_read(file, NULL, &error);
     if (stream == NULL)
@@ -62,20 +60,16 @@ is_text_file(const char *path)
         return TRUE; /* 无法读取时仍显示 */
     }
 
+    r = g_input_stream_read(G_INPUT_STREAM(stream), buf, bufsize, NULL, NULL);
+    if (r >= 0)
     {
-        gssize r = g_input_stream_read(G_INPUT_STREAM(stream), buf,
-                                       sizeof(buf), NULL, NULL);
-        if (r >= 0)
+        *n = (gsize)r;
+        for (i = 0; i < *n; i++)
         {
-            gsize i;
-            n = (gsize)r;
-            for (i = 0; i < n; i++)
+            if (buf[i] == '\0')
             {
-                if (buf[i] == '\0')
-                {
-                    text = FALSE;
-                    break;
-                }
+                text = FALSE;
+                break;
             }
         }
     }
@@ -126,35 +120,44 @@ lr_scanner_list_dir(const char *path)
 
         is_dir = g_file_test(full, G_FILE_TEST_IS_DIR);
 
-        /* 过滤：空文件夹、超大文件、非文本文件均不显示 */
         if (is_dir)
         {
+            /* 过滤：空文件夹不显示 */
             if (is_empty_dir(full))
             {
                 g_free(full);
                 continue;
             }
+
+            entry = g_new0(LrScanEntry, 1);
+            entry->name = g_strdup(name);
+            entry->path = full;
+            entry->kind = LR_SCAN_DIR;
+            g_ptr_array_add(arr, entry);
         }
         else
         {
-            if (is_oversized(full) || !is_text_file(full))
+            /* 过滤超大文件 / 非文本文件；只读一次头部，既判断文本性又用于
+             * 格式嗅探，避免为判断格式而整文件读盘 */
+            guchar head[LR_SNIFF_MAX + 1];
+            gsize n = 0;
+            LrConfigFormat fmt;
+
+            if (is_oversized(full) ||
+                !read_file_head(full, head, LR_SNIFF_MAX, &n))
             {
                 g_free(full);
                 continue;
             }
-        }
+            head[n] = '\0';
 
-        entry = g_new0(LrScanEntry, 1);
-        entry->name = g_strdup(name);
-        entry->path = full;
+            entry = g_new0(LrScanEntry, 1);
+            entry->name = g_strdup(name);
+            entry->path = full;
 
-        if (is_dir)
-        {
-            entry->kind = LR_SCAN_DIR;
-        }
-        else
-        {
-            LrConfigFormat fmt = lr_format_detect(full);
+            /* 基于头部嗅探（JSON 数组 / XML 需全文验证：超 LR_SNIFF_MAX 的
+             * 超大文件可能归为“其他文件”，仍可打开，仅影响图标分类） */
+            fmt = lr_format_detect_content(full, (const char *)head, n);
             if (lr_format_supported(fmt))
             {
                 entry->kind = LR_SCAN_SUPPORTED_FILE;
@@ -164,8 +167,8 @@ lr_scanner_list_dir(const char *path)
             {
                 entry->kind = LR_SCAN_OTHER_FILE;
             }
+            g_ptr_array_add(arr, entry);
         }
-        g_ptr_array_add(arr, entry);
     }
 
     g_dir_close(dir);

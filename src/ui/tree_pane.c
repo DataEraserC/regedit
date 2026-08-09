@@ -1,5 +1,6 @@
 #include "ui/tree_pane.h"
 #include "core/scanner.h"
+#include "ui/dialog_utils.h"
 
 enum
 {
@@ -156,6 +157,28 @@ fill_children(LrTreePane *self, GtkTreeIter *parent, const char *dirpath)
     gtk_tree_store_set(self->store, parent, COL_LOADED, TRUE, -1);
 }
 
+/* 加载目录节点：先填真实子节点，再移除占位 dummy。
+ * 顺序不能颠倒：若先删 dummy，该行会瞬间“无子节点”，
+ * GtkTreeView 会因此自动折叠，导致首次需两次展开的 bug。 */
+static void
+load_dir_node(LrTreePane *self, GtkTreeIter *iter, const char *dirpath)
+{
+    GtkTreeModel *model = GTK_TREE_MODEL(self->store);
+    GtkTreeIter child;
+
+    fill_children(self, iter, dirpath);
+
+    /* 移除占位的 dummy 子节点（若有） */
+    if (gtk_tree_model_iter_children(model, &child, iter))
+    {
+        gchar *cpath = NULL;
+        gtk_tree_model_get(model, &child, COL_PATH, &cpath, -1);
+        if (cpath == NULL || *cpath == '\0')
+            gtk_tree_store_remove(self->store, &child);
+        g_free(cpath);
+    }
+}
+
 static void
 on_row_expanded(GtkTreeView *view, GtkTreeIter *iter, GtkTreePath *tpath,
                 gpointer user_data)
@@ -163,7 +186,6 @@ on_row_expanded(GtkTreeView *view, GtkTreeIter *iter, GtkTreePath *tpath,
     LrTreePane *self = user_data;
     gboolean loaded = FALSE;
     gchar *dirpath = NULL;
-    GtkTreeIter child;
 
     (void)view;
     (void)tpath;
@@ -177,23 +199,7 @@ on_row_expanded(GtkTreeView *view, GtkTreeIter *iter, GtkTreePath *tpath,
         return;
     }
 
-    /* 先填充真实子节点，再移除占位 dummy。
-     * 顺序不能颠倒：若先删 dummy，该行会瞬间“无子节点”，
-     * GtkTreeView 会因此自动折叠，导致首次需两次展开的 bug。 */
-    fill_children(self, iter, dirpath);
-
-    /* 移除占位的 dummy 子节点（若有） */
-    if (gtk_tree_model_iter_children(GTK_TREE_MODEL(self->store), &child,
-                                     iter))
-    {
-        gchar *cpath = NULL;
-        gtk_tree_model_get(GTK_TREE_MODEL(self->store), &child,
-                           COL_PATH, &cpath, -1);
-        if (cpath == NULL || *cpath == '\0')
-            gtk_tree_store_remove(self->store, &child);
-        g_free(cpath);
-    }
-
+    load_dir_node(self, iter, dirpath);
     g_free(dirpath);
 }
 
@@ -339,31 +345,6 @@ on_popup_copy_name(GtkMenuItem *item, gpointer user_data)
     }
 }
 
-/* 独立子窗口：显示并把位置定到主窗口中心（不与主窗口联动） */
-static void
-center_dialog_on(GtkWidget *dialog, GtkWindow *parent)
-{
-    gint px, py, pw, ph, dw, dh;
-
-    gtk_window_get_position(parent, &px, &py);
-    gtk_window_get_size(parent, &pw, &ph);
-    gtk_widget_show_all(dialog);
-    gtk_window_get_size(GTK_WINDOW(dialog), &dw, &dh);
-    gtk_window_move(GTK_WINDOW(dialog),
-                    MAX(px + (pw - dw) / 2, 0),
-                    MAX(py + (ph - dh) / 2, 0));
-}
-
-/* 对话框任何响应（含关闭）都销毁自身 */
-static void
-tree_dialog_destroy_on_response(GtkDialog *dialog, gint response_id,
-                                gpointer user_data)
-{
-    (void)response_id;
-    (void)user_data;
-    gtk_widget_destroy(GTK_WIDGET(dialog));
-}
-
 /* 尚未实现的功能：弹出提示 */
 static void
 on_popup_not_impl(GtkMenuItem *item, gpointer user_data)
@@ -377,8 +358,8 @@ on_popup_not_impl(GtkMenuItem *item, gpointer user_data)
                                     "「%s」功能尚未实现，规划于后续版本。",
                                     label);
     g_signal_connect(dialog, "response",
-                     G_CALLBACK(tree_dialog_destroy_on_response), NULL);
-    center_dialog_on(dialog, GTK_WINDOW(toplevel));
+                     G_CALLBACK(lr_dialog_destroy_on_response), NULL);
+    lr_dialog_center_on(dialog, GTK_WINDOW(toplevel));
 }
 
 static void
@@ -599,7 +580,6 @@ ensure_children_loaded(LrTreePane *self, GtkTreeIter *iter)
     GtkTreeModel *model = GTK_TREE_MODEL(self->store);
     gboolean loaded = FALSE;
     gchar *dirpath = NULL;
-    GtkTreeIter child;
 
     gtk_tree_model_get(model, iter, COL_LOADED, &loaded,
                        COL_PATH, &dirpath, -1);
@@ -609,19 +589,7 @@ ensure_children_loaded(LrTreePane *self, GtkTreeIter *iter)
         return;
     }
 
-    /* 与 on_row_expanded 相同：先填真实子节点，再移除占位 dummy，
-     * 避免中途“无子节点”触发自动折叠 */
-    fill_children(self, iter, dirpath);
-
-    if (gtk_tree_model_iter_children(model, &child, iter))
-    {
-        gchar *cpath = NULL;
-        gtk_tree_model_get(model, &child, COL_PATH, &cpath, -1);
-        if (cpath == NULL || *cpath == '\0')
-            gtk_tree_store_remove(self->store, &child);
-        g_free(cpath);
-    }
-
+    load_dir_node(self, iter, dirpath);
     g_free(dirpath);
 }
 

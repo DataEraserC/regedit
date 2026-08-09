@@ -1,4 +1,5 @@
 #include "core/format.h"
+#include "core/limits.h"
 
 #include <string.h>
 #include <json-glib/json-glib.h>
@@ -26,8 +27,6 @@ has_systemd_extension(const char *path)
     return FALSE;
 }
 
-/* 嗅探最多读取的字节数：远超配置文件典型大小 */
-#define LR_SNIFF_MAX 65536
 /* 「关键字-参数」行中参数为多词（自然语言特征）的比例阈值，超过则视为普通文本 */
 #define LR_NATURAL_LANG_THRESHOLD 60
 
@@ -164,92 +163,107 @@ scan_stats(const char *content, gsize len)
     return st;
 }
 
+/* 嗅探上下文：承载内容/路径，并惰性计算一次行特征统计供多个 driver 复用 */
+typedef struct
+{
+    const char *content;
+    gsize len;
+    const char *path;
+    LineStats stats; /* 懒计算一次 */
+    gboolean stats_valid;
+} LrSniffCtx;
+
+/* 惰性获取行特征统计：同一内容只 split/扫描一次 */
+static const LineStats *
+sniff_stats(LrSniffCtx *ctx)
+{
+    if (!ctx->stats_valid)
+    {
+        ctx->stats = scan_stats(ctx->content, ctx->len);
+        ctx->stats_valid = TRUE;
+    }
+    return &ctx->stats;
+}
+
 /* ---- 各格式嗅探器（数组顺序即优先级） ---- */
 
 static gboolean
-sniff_systemd(const char *content, gsize len, const char *path)
+sniff_systemd(LrSniffCtx *ctx)
 {
-    (void)content;
-    (void)len;
-    return has_systemd_extension(path);
+    return has_systemd_extension(ctx->path);
 }
 
 static gboolean
-sniff_json(const char *content, gsize len, const char *path)
+sniff_json(LrSniffCtx *ctx)
 {
-    const char *p = content;
-    (void)path;
+    const char *p = ctx->content;
 
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
         p++;
     if (*p == '{')
         return TRUE;
     if (*p == '[')
-        return is_json_array_content(content, len);
+        return is_json_array_content(ctx->content, ctx->len);
     return FALSE;
 }
 
 static gboolean
-sniff_apt(const char *content, gsize len, const char *path)
+sniff_apt(LrSniffCtx *ctx)
 {
-    (void)path;
-    return is_apt_config(content, len);
+    return is_apt_config(ctx->content, ctx->len);
 }
 
 /* XML：以 < 开头，且整体是合法 XML（GMarkup 验证） */
 static gboolean
-sniff_xml(const char *content, gsize len, const char *path)
+sniff_xml(LrSniffCtx *ctx)
 {
-    const char *p = content;
+    const char *p = ctx->content;
     GMarkupParser parser = {0}; /* 全 NULL 回调：仅用于验证合法性 */
-    GMarkupParseContext *ctx;
+    GMarkupParseContext *parse_ctx;
     GError *error = NULL;
     gboolean ok = FALSE;
 
-    (void)path;
-    if (content == NULL)
+    if (ctx->content == NULL)
         return FALSE;
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
         p++;
     if (*p != '<')
         return FALSE;
 
-    ctx = g_markup_parse_context_new(&parser, 0, NULL, NULL);
-    if (g_markup_parse_context_parse(ctx, content, (gssize)len, &error) &&
-        g_markup_parse_context_end_parse(ctx, &error))
+    parse_ctx = g_markup_parse_context_new(&parser, 0, NULL, NULL);
+    if (g_markup_parse_context_parse(parse_ctx, ctx->content,
+                                     (gssize)ctx->len, &error) &&
+        g_markup_parse_context_end_parse(parse_ctx, &error))
         ok = TRUE;
     if (error != NULL)
         g_clear_error(&error);
-    g_markup_parse_context_free(ctx);
+    g_markup_parse_context_free(parse_ctx);
     return ok;
 }
 
 static gboolean
-sniff_ini(const char *content, gsize len, const char *path)
+sniff_ini(LrSniffCtx *ctx)
 {
-    (void)path;
-    return scan_stats(content, len).has_section;
+    return sniff_stats(ctx)->has_section;
 }
 
 static gboolean
-sniff_kv(const char *content, gsize len, const char *path)
+sniff_kv(LrSniffCtx *ctx)
 {
-    (void)path;
-    return scan_stats(content, len).has_kv;
+    return sniff_stats(ctx)->has_kv;
 }
 
 static gboolean
-sniff_keyword(const char *content, gsize len, const char *path)
+sniff_keyword(LrSniffCtx *ctx)
 {
-    LineStats st = scan_stats(content, len);
-    (void)path;
+    const LineStats *st = sniff_stats(ctx);
 
-    if (!st.has_non_comment || !st.keyword_style)
+    if (!st->has_non_comment || !st->keyword_style)
         return FALSE;
     /* 大多数「关键字-参数」行的参数为多词（自然语言特征，如 /etc/legal 的
      * 英文说明），判定为普通文本而非配置 */
-    if (st.keyword_lines > 0 &&
-        st.multiword_value_lines * 100 / st.keyword_lines >
+    if (st->keyword_lines > 0 &&
+        st->multiword_value_lines * 100 / st->keyword_lines >
             LR_NATURAL_LANG_THRESHOLD)
         return FALSE;
     return TRUE;
@@ -260,7 +274,7 @@ typedef struct
 {
     const char *name; /* 显示名 */
     LrConfigFormat id;
-    gboolean (*sniff)(const char *content, gsize len, const char *path);
+    gboolean (*sniff)(LrSniffCtx *ctx);
     gboolean (*parse)(const char *content, gsize len, LrConfigFile *file);
 } LrFormatDriver;
 
@@ -277,6 +291,7 @@ static const LrFormatDriver k_drivers[] = {
 LrConfigFormat
 lr_format_detect_content(const char *path, const char *content, gsize len)
 {
+    LrSniffCtx ctx = {content, len, path, {0}, FALSE};
     guint i;
 
     if (content == NULL)
@@ -288,7 +303,7 @@ lr_format_detect_content(const char *path, const char *content, gsize len)
 
     for (i = 0; i < G_N_ELEMENTS(k_drivers); i++)
     {
-        if (k_drivers[i].sniff(content, len, path))
+        if (k_drivers[i].sniff(&ctx))
             return k_drivers[i].id;
     }
     return LR_FORMAT_UNKNOWN;
