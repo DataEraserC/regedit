@@ -156,85 +156,48 @@ done:
     return out;
 }
 
-/* 关于对话框信息行：键 + 值 */
+/* 关于对话框右侧多行文本行 */
 static void
-about_add_info(GtkWidget *vbox, const char *key, const char *value)
+about_add_line(GtkWidget *right, const char *text)
 {
-    GtkWidget *row, *label;
-
-    row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    label = gtk_label_new(key);
-    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-    gtk_widget_set_size_request(label, 96, -1);
-    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
-
-    label = gtk_label_new(value);
+    GtkWidget *label = gtk_label_new(text);
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
     gtk_label_set_selectable(GTK_LABEL(label), TRUE);
-    gtk_box_pack_start(GTK_BOX(row), label, TRUE, TRUE, 0);
-
-    gtk_box_pack_start(GTK_BOX(vbox), row, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(right), label, FALSE, FALSE, 0);
 }
 
 static void
 on_about(GtkWidget *widget, gpointer user_data)
 {
     GtkWidget *window = user_data;
-    GtkWidget *dialog, *content, *vbox, *hbox, *img, *label;
+    GtkWidget *dialog, *content, *vbox, *hbox, *img, *label, *left, *right;
     GdkPixbuf *icon;
-    gchar *pretty, *kernel, *desktop, *init_prog, *session, *user, *tmp;
+    gchar *name, *pretty, *version, *kernel, *init_prog, *session, *user, *tmp;
     struct utsname uts;
     gboolean have_uts;
+    gint k;
 
     (void)widget;
 
     dialog = gtk_dialog_new_with_buttons("关于注册表编辑器", NULL, 0, "确定",
                                          GTK_RESPONSE_CLOSE, NULL);
     content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    gtk_container_set_border_width(GTK_CONTAINER(vbox), 14);
+    vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_set_border_width(GTK_CONTAINER(vbox), 20);
     gtk_box_pack_start(GTK_BOX(content), vbox, TRUE, TRUE, 0);
 
-    /* 顶部：系统图标 + 系统名 */
-    icon = load_about_icon(48);
-    img = gtk_image_new_from_pixbuf(icon);
-    if (icon != NULL)
-        g_object_unref(icon);
-
+    /* 系统信息 */
     have_uts = (uname(&uts) == 0);
+    name = os_release_value("NAME");
     pretty = os_release_value("PRETTY_NAME");
     if (pretty == NULL)
         pretty = g_strdup_printf("%s %s",
                                  have_uts ? uts.sysname : "Linux",
                                  have_uts ? uts.release : "");
-
-    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    gtk_box_pack_start(GTK_BOX(hbox), img, FALSE, FALSE, 0);
-
-    tmp = g_strdup_printf("%s 注册表编辑器", pretty);
-    label = gtk_label_new(tmp);
-    g_free(tmp);
-    gtk_label_set_selectable(GTK_LABEL(label), TRUE);
-    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-    gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 6);
-
-    /* 说明 */
-    label = gtk_label_new(
-        "Linux 版 regedit —— 以熟悉的注册表编辑器交互浏览 /etc 与 "
-        "~/.config 下的配置文件。");
-    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-    gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
-    gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 2);
-
-    /* 系统信息 */
+    version = os_release_value("VERSION");
+    if (version == NULL)
+        version = g_strdup("未知");
     kernel = g_strdup(have_uts ? uts.release : "未知");
-    desktop = g_strdup(g_getenv("XDG_CURRENT_DESKTOP"));
-    if (desktop == NULL || *desktop == '\0')
-    {
-        g_free(desktop);
-        desktop = g_strdup("未知");
-    }
     init_prog = g_strdup("未知");
     if (g_file_get_contents("/proc/1/comm", &tmp, NULL, NULL))
     {
@@ -246,42 +209,103 @@ on_about(GtkWidget *widget, gpointer user_data)
     }
     session = g_strdup(g_getenv("XDG_SESSION_TYPE"));
     if (session == NULL || *session == '\0')
-    {
-        g_free(session);
-        if (g_getenv("WAYLAND_DISPLAY") != NULL)
-            session = g_strdup("wayland");
-        else if (g_getenv("DISPLAY") != NULL)
-            session = g_strdup("x11");
-        else
-            session = g_strdup("未知");
-    }
-
-    about_add_info(vbox, "内核版本号:", kernel);
-    about_add_info(vbox, "桌面版本:", desktop);
-    about_add_info(vbox, "init 程序:", init_prog);
-    about_add_info(vbox, "图形服务器:", session);
-
-    /* 分隔线 */
-    gtk_box_pack_start(GTK_BOX(vbox),
-                       gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE,
-                       FALSE, 6);
-
-    /* 版权与使用权 */
-    label = gtk_label_new("heyManNice 保留不了所有权利");
-    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-    gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 2);
-
+        session = g_strdup(g_getenv("WAYLAND_DISPLAY") != NULL   ? "wayland"
+                           : g_getenv("DISPLAY") != NULL ? "x11" : "未知");
     user = g_strdup(g_get_user_name());
-    tmp = g_strdup_printf("%s 可使用本产品", user);
-    label = gtk_label_new(tmp);
+
+    /* 顶部：放大 3 倍的系统图标 + 系统名（无“注册表编辑器”字样） */
+    icon = load_about_icon(48 * 3);
+    img = gtk_image_new_from_pixbuf(icon);
+    if (icon != NULL)
+        g_object_unref(icon);
+
+    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+    gtk_box_pack_start(GTK_BOX(hbox), img, FALSE, FALSE, 0);
+
+    label = gtk_label_new(NULL);
+    tmp = g_strdup_printf("<span size=\"36pt\" weight=\"bold\">%s</span>",
+                          pretty);
+    gtk_label_set_markup(GTK_LABEL(label), tmp);
     g_free(tmp);
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-    gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
+
+    /* 水平分隔线 */
+    gtk_box_pack_start(GTK_BOX(vbox),
+                       gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE,
+                       FALSE, 16);
+
+    /* 左右视图：左 1 倍系统 logo，右多行文本 */
+    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+
+    left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    icon = load_about_icon(48);
+    img = gtk_image_new_from_pixbuf(icon);
+    if (icon != NULL)
+        g_object_unref(icon);
+    gtk_box_pack_start(GTK_BOX(left), img, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(hbox), left, FALSE, FALSE, 0);
+
+    right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_box_pack_start(GTK_BOX(hbox), right, TRUE, TRUE, 0);
+
+    /* 行1：系统名（无版本）+ GNU/Linux */
+    tmp = g_strdup_printf("%s GNU/Linux", name != NULL ? name : "Linux");
+    about_add_line(right, tmp);
+    g_free(tmp);
+
+    /* 行2：版本 + 系统版本（内核/init/图形服务器） */
+    tmp = g_strdup_printf("版本 %s（系统版本：Linux %s，%s，%s）",
+                          version, kernel, init_prog, session);
+    about_add_line(right, tmp);
+    g_free(tmp);
+
+    /* 行3：版权符号 + 文案 */
+    about_add_line(right, "© heyManNice 保留不了所有权利");
+
+    /* 空一行 */
+    gtk_box_pack_start(GTK_BOX(right), gtk_label_new(""), FALSE, FALSE, 0);
+
+    /* 开源声明（多行） */
+    label = gtk_label_new(
+        "本 GNU/Linux 操作系统及其组件基于自由及开源软件构建，由各自的"
+        "版权所有人根据 GPL、LGPL、MIT、Apache 等开源许可证授权分发。"
+        "系统中的内核、工具及用户界面受相关开源许可证与版权法保护。");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_justify(GTK_LABEL(label), GTK_JUSTIFY_LEFT);
+    gtk_box_pack_start(GTK_BOX(right), label, FALSE, FALSE, 0);
+
+    /* 空四行 */
+    for (k = 0; k < 4; k++)
+        gtk_box_pack_start(GTK_BOX(right), gtk_label_new(""), FALSE, FALSE,
+                           0);
+
+    /* 许可行 */
+    about_add_line(right, "根据开源许可，许可如下用户使用本产品");
+
+    /* 空一行 */
+    gtk_box_pack_start(GTK_BOX(right), gtk_label_new(""), FALSE, FALSE, 0);
+
+    /* 缩进 2 字符 + 当前用户名 */
+    tmp = g_strdup_printf("　　%s", user);
+    about_add_line(right, tmp);
+    g_free(tmp);
+
+    gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
+
+    /* 确定按钮与窗口边界留边距 */
+    {
+        GtkWidget *action = gtk_dialog_get_action_area(GTK_DIALOG(dialog));
+        gtk_container_set_border_width(GTK_CONTAINER(action), 12);
+    }
 
     /* 清理 */
+    g_free(name);
     g_free(pretty);
+    g_free(version);
     g_free(kernel);
-    g_free(desktop);
     g_free(init_prog);
     g_free(session);
     g_free(user);
