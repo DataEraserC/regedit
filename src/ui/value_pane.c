@@ -819,8 +819,7 @@ on_enabled_edited(GtkCellRendererText *renderer, const gchar *path,
 }
 
 /* 在表格末尾追加一个配置项（仅内存，不写盘） */
-void
-lr_value_pane_add_value(LrValuePane *self, const char *type)
+void lr_value_pane_add_value(LrValuePane *self, const char *type)
 {
     const gchar *def_name, *def_data;
     GtkTreeIter iter;

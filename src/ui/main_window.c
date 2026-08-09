@@ -6,6 +6,8 @@
 #include "core/format.h"
 
 #include <gtk/gtk.h>
+#include <string.h>
+#include <sys/utsname.h>
 
 static void
 open_path(LrMainWindow *mw, const char *path, gboolean is_dir)
@@ -88,24 +90,202 @@ on_quit(GtkWidget *widget, gpointer user_data)
     gtk_widget_destroy(window);
 }
 
+/* ========== 关于对话框（模仿 regedit：图标 + 系统名 + 系统信息） ========== */
+
+/* 加载系统图标：优先发行版 logo，其次企鹅 Tux，最后通用计算机图标 */
+static GdkPixbuf *
+load_about_icon(gint size)
+{
+    GtkIconTheme *theme = gtk_icon_theme_get_default();
+    static const gchar *const names[] = {"distributor-logo", "tux",
+                                         "computer", NULL};
+    gint i;
+
+    for (i = 0; names[i] != NULL; i++)
+    {
+        GError *error = NULL;
+        GdkPixbuf *pb =
+            gtk_icon_theme_load_icon(theme, names[i], size, 0, &error);
+        if (pb != NULL)
+            return pb;
+        g_clear_error(&error);
+    }
+    return NULL;
+}
+
+/* 读取 /etc/os-release 的键值（如 PRETTY_NAME），返回新分配字符串 */
+static char *
+os_release_value(const char *key)
+{
+    gchar *content = NULL;
+    gchar **lines = NULL;
+    gchar *prefix = g_strdup_printf("%s=", key);
+    char *out = NULL;
+    guint i;
+
+    if (!g_file_get_contents("/etc/os-release", &content, NULL, NULL))
+        goto done;
+
+    lines = g_strsplit(content, "\n", -1);
+    for (i = 0; lines[i] != NULL; i++)
+    {
+        if (g_str_has_prefix(lines[i], prefix))
+        {
+            const char *v = lines[i] + strlen(prefix);
+            gchar *dup = g_strdup(v);
+            gchar *s = g_strstrip(dup);
+            gsize n = strlen(s);
+            if (n >= 2 && s[0] == '"' && s[n - 1] == '"')
+            {
+                s[n - 1] = '\0';
+                out = g_strdup(s + 1);
+            }
+            else
+            {
+                out = g_strdup(s);
+            }
+            g_free(dup);
+            break;
+        }
+    }
+
+done:
+    g_strfreev(lines);
+    g_free(content);
+    g_free(prefix);
+    return out;
+}
+
+/* 关于对话框信息行：键 + 值 */
+static void
+about_add_info(GtkWidget *vbox, const char *key, const char *value)
+{
+    GtkWidget *row, *label;
+
+    row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    label = gtk_label_new(key);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_widget_set_size_request(label, 96, -1);
+    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
+
+    label = gtk_label_new(value);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_label_set_selectable(GTK_LABEL(label), TRUE);
+    gtk_box_pack_start(GTK_BOX(row), label, TRUE, TRUE, 0);
+
+    gtk_box_pack_start(GTK_BOX(vbox), row, FALSE, FALSE, 2);
+}
+
 static void
 on_about(GtkWidget *widget, gpointer user_data)
 {
     GtkWidget *window = user_data;
-    GtkWidget *dialog = gtk_about_dialog_new();
-    GtkAboutDialog *about = GTK_ABOUT_DIALOG(dialog);
+    GtkWidget *dialog, *content, *vbox, *hbox, *img, *label;
+    GdkPixbuf *icon;
+    gchar *pretty, *kernel, *desktop, *init_prog, *session, *user, *tmp;
+    struct utsname uts;
+    gboolean have_uts;
+
     (void)widget;
 
-    gtk_about_dialog_set_program_name(about, "linux-regedit");
-    gtk_about_dialog_set_version(about, "0.1.0");
-    gtk_about_dialog_set_comments(
-        about,
-        "Linux 版 regedit —— 以熟悉的注册表编辑器交互浏览 /etc 与 ~/.config "
-        "下的配置文件。");
-    gtk_about_dialog_set_license_type(about, GTK_LICENSE_GPL_3_0);
-    gtk_about_dialog_set_copyright(about, "© 2026 DeepSeek");
+    dialog = gtk_dialog_new_with_buttons("关于注册表编辑器", NULL, 0, "确定",
+                                         GTK_RESPONSE_CLOSE, NULL);
+    content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_container_set_border_width(GTK_CONTAINER(vbox), 14);
+    gtk_box_pack_start(GTK_BOX(content), vbox, TRUE, TRUE, 0);
 
-    /* 独立可移动子窗口：相对主窗口定位，不与主窗口联动 */
+    /* 顶部：系统图标 + 系统名 */
+    icon = load_about_icon(48);
+    img = gtk_image_new_from_pixbuf(icon);
+    if (icon != NULL)
+        g_object_unref(icon);
+
+    have_uts = (uname(&uts) == 0);
+    pretty = os_release_value("PRETTY_NAME");
+    if (pretty == NULL)
+        pretty = g_strdup_printf("%s %s",
+                                 have_uts ? uts.sysname : "Linux",
+                                 have_uts ? uts.release : "");
+
+    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_box_pack_start(GTK_BOX(hbox), img, FALSE, FALSE, 0);
+
+    tmp = g_strdup_printf("%s 注册表编辑器", pretty);
+    label = gtk_label_new(tmp);
+    g_free(tmp);
+    gtk_label_set_selectable(GTK_LABEL(label), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 6);
+
+    /* 说明 */
+    label = gtk_label_new(
+        "Linux 版 regedit —— 以熟悉的注册表编辑器交互浏览 /etc 与 "
+        "~/.config 下的配置文件。");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+    gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 2);
+
+    /* 系统信息 */
+    kernel = g_strdup(have_uts ? uts.release : "未知");
+    desktop = g_strdup(g_getenv("XDG_CURRENT_DESKTOP"));
+    if (desktop == NULL || *desktop == '\0')
+    {
+        g_free(desktop);
+        desktop = g_strdup("未知");
+    }
+    init_prog = g_strdup("未知");
+    if (g_file_get_contents("/proc/1/comm", &tmp, NULL, NULL))
+    {
+        gchar *s = g_strstrip(tmp);
+        g_free(init_prog);
+        init_prog = g_strdup(s);
+        g_free(tmp);
+        tmp = NULL;
+    }
+    session = g_strdup(g_getenv("XDG_SESSION_TYPE"));
+    if (session == NULL || *session == '\0')
+    {
+        g_free(session);
+        if (g_getenv("WAYLAND_DISPLAY") != NULL)
+            session = g_strdup("wayland");
+        else if (g_getenv("DISPLAY") != NULL)
+            session = g_strdup("x11");
+        else
+            session = g_strdup("未知");
+    }
+
+    about_add_info(vbox, "内核版本号:", kernel);
+    about_add_info(vbox, "桌面版本:", desktop);
+    about_add_info(vbox, "init 程序:", init_prog);
+    about_add_info(vbox, "图形服务器:", session);
+
+    /* 分隔线 */
+    gtk_box_pack_start(GTK_BOX(vbox),
+                       gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE,
+                       FALSE, 6);
+
+    /* 版权与使用权 */
+    label = gtk_label_new("heyManNice 保留不了所有权利");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 2);
+
+    user = g_strdup(g_get_user_name());
+    tmp = g_strdup_printf("%s 可使用本产品", user);
+    label = gtk_label_new(tmp);
+    g_free(tmp);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 2);
+
+    /* 清理 */
+    g_free(pretty);
+    g_free(kernel);
+    g_free(desktop);
+    g_free(init_prog);
+    g_free(session);
+    g_free(user);
+
     g_signal_connect(dialog, "response",
                      G_CALLBACK(lr_dialog_destroy_on_response), NULL);
     lr_dialog_center_on(dialog, GTK_WINDOW(window));
@@ -157,7 +337,7 @@ build_new_submenu(LrMainWindow *mw, GtkWidget *menu)
     {
         item = gtk_menu_item_new_with_label(names[i]);
         g_signal_connect(item, "activate", G_CALLBACK(on_new_not_impl),
-                         (gpointer) names[i]);
+                         (gpointer)names[i]);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     }
 

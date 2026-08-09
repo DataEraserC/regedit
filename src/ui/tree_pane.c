@@ -384,7 +384,7 @@ build_new_submenu(LrTreePane *self, GtkWidget *menu)
     {
         item = gtk_menu_item_new_with_label(names[i]);
         g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                         (gpointer) names[i]);
+                         (gpointer)names[i]);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     }
 }
