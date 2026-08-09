@@ -628,23 +628,25 @@ void lr_value_pane_clear(LrValuePane *self)
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "empty");
 }
 
-/* 追加一列文本列：title 表头，col 模型列，expand 是否随宽度扩展，
- * gray 是否灰色前景，min_width 最小宽度（0 表示不设） */
+/* 追加一列文本列：title 表头，col 模型列，expand 是否随窗口扩展填满剩余空间，
+ * gray 是否灰色前景，width 固定列宽（0 则用默认值）。
+ * 列宽采用 FIXED 模式 + 省略号：内容再长也不会把列顶开。 */
 static void
 append_text_column(GtkTreeView *view, const char *title, gint col,
-                   gboolean expand, gboolean gray, gint min_width)
+                   gboolean expand, gboolean gray, gint width)
 {
     GtkTreeViewColumn *column = gtk_tree_view_column_new();
     GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
 
     gtk_tree_view_column_set_title(column, title);
     gtk_tree_view_column_set_resizable(column, TRUE);
+    gtk_tree_view_column_set_sizing(column, GTK_TREE_VIEW_COLUMN_FIXED);
+    g_object_set(renderer, "ellipsize", PANGO_ELLIPSIZE_END, NULL);
     if (gray)
         g_object_set(renderer, "foreground", "gray", NULL);
     gtk_tree_view_column_pack_start(column, renderer, expand);
     gtk_tree_view_column_add_attribute(column, renderer, "text", col);
-    if (min_width > 0)
-        gtk_tree_view_column_set_min_width(column, min_width);
+    gtk_tree_view_column_set_fixed_width(column, width > 0 ? width : 120);
     gtk_tree_view_append_column(view, column);
 }
 
@@ -891,6 +893,9 @@ build_enabled_column(LrValuePane *self)
 
     col = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(col, "启用");
+    gtk_tree_view_column_set_resizable(col, TRUE);
+    gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
+    gtk_tree_view_column_set_fixed_width(col, 75);
     gtk_tree_view_column_pack_start(col, renderer, FALSE);
     gtk_tree_view_column_add_attribute(col, renderer, "text", COL_ENABLED);
     gtk_tree_view_append_column(self->view, col);
@@ -947,6 +952,9 @@ build_type_column(LrValuePane *self)
 
     col = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(col, "类型");
+    gtk_tree_view_column_set_resizable(col, TRUE);
+    gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
+    gtk_tree_view_column_set_fixed_width(col, 93);
     gtk_tree_view_column_pack_start(col, renderer, FALSE);
     gtk_tree_view_column_add_attribute(col, renderer, "text", COL_TYPE);
     gtk_tree_view_append_column(self->view, col);
@@ -959,13 +967,18 @@ build_data_column(LrValuePane *self)
     GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
     GtkTreeViewColumn *col;
 
-    g_object_set(renderer, "editable", TRUE, NULL);
+    g_object_set(renderer, "editable", TRUE, "ellipsize",
+                 PANGO_ELLIPSIZE_END, NULL);
     g_signal_connect(renderer, "edited", G_CALLBACK(on_data_edited), self);
     g_signal_connect(renderer, "editing-started",
                      G_CALLBACK(on_data_editing_started), self);
 
     col = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(col, "数据");
+    gtk_tree_view_column_set_resizable(col, TRUE);
+    gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
+    /* 初始宽度较小，实际宽度由 expand 分配：数据列占满剩余空间 */
+    gtk_tree_view_column_set_fixed_width(col, 100);
     gtk_tree_view_column_pack_start(col, renderer, TRUE);
     gtk_tree_view_column_add_attribute(col, renderer, "text", COL_DATA);
     gtk_tree_view_column_set_expand(col, TRUE);
@@ -1042,10 +1055,10 @@ lr_value_pane_new(void)
                      G_CALLBACK(on_value_button_press), self);
 
     build_enabled_column(self);
-    append_text_column(self->view, "名称", COL_NAME, TRUE, FALSE, 160);
+    append_text_column(self->view, "名称", COL_NAME, FALSE, FALSE, 213);
     build_type_column(self);
     build_data_column(self);
-    append_text_column(self->view, "备注", COL_COMMENT, TRUE, TRUE, 0);
+    append_text_column(self->view, "备注", COL_COMMENT, FALSE, TRUE, 360);
 
     scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
