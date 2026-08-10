@@ -17,6 +17,9 @@
 
 ---
 
+## ✨ 截图
+<img src="images/preview.png" width="100%" alt="预览">
+
 ## ✨ 特性
 
 - 🗂️ **「计算机」根 + 三个根键**：`HKEY_LOCAL_MACHINE`(`/etc`)、`HKEY_CURRENT_USER`(`~/.config`)、`HKEY_SYSTEM_BOOT`(`/boot`)，左侧树懒加载展示目录结构，同级目录以虚线连接。
