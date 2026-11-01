@@ -1,6 +1,9 @@
 #include "ui/tree_pane.h"
 #include "core/scanner.h"
 #include "ui/dialog_utils.h"
+#include "ui/test_roots.h"
+
+#include <glib/gi18n.h>
 
 enum
 {
@@ -62,57 +65,56 @@ add_dummy_child(LrTreePane *self, GtkTreeIter *parent)
 static void
 add_computer_root(LrTreePane *self)
 {
-    const gchar *home = g_get_home_dir();
-    gchar *config = g_build_filename(home, ".config", NULL);
-    GtkTreeIter computer, etc, user, boot;
+    const char *etc = lr_etc_root();
+    const char *config = lr_config_root();
+    const char *boot = lr_boot_root();
+    GtkTreeIter computer_iter, etc_iter, user_iter, boot_iter;
 
-    gtk_tree_store_append(self->store, &computer, NULL);
-    gtk_tree_store_set(self->store, &computer,
+    gtk_tree_store_append(self->store, &computer_iter, NULL);
+    gtk_tree_store_set(self->store, &computer_iter,
                        COL_ICON, self->icon_computer,
-                       COL_NAME, "计算机",
+                       COL_NAME, _("Computer"),
                        COL_PATH, "",
                        COL_KIND, LR_SCAN_DIR,
                        COL_FORMAT, LR_FORMAT_UNKNOWN,
                        COL_LOADED, TRUE,
                        -1);
 
-    /* HKEY_LOCAL_MACHINE —— 系统级配置，对应 /etc */
-    gtk_tree_store_append(self->store, &etc, &computer);
-    gtk_tree_store_set(self->store, &etc,
+    /* HKEY_LOCAL_MACHINE —— 系统级配置，默认 /etc（LR_TEST_ETC 可覆盖） */
+    gtk_tree_store_append(self->store, &etc_iter, &computer_iter);
+    gtk_tree_store_set(self->store, &etc_iter,
                        COL_ICON, self->icon_folder,
                        COL_NAME, "HKEY_LOCAL_MACHINE",
-                       COL_PATH, "/etc",
+                       COL_PATH, etc,
                        COL_KIND, LR_SCAN_DIR,
                        COL_FORMAT, LR_FORMAT_UNKNOWN,
                        COL_LOADED, FALSE,
                        -1);
-    add_dummy_child(self, &etc);
+    add_dummy_child(self, &etc_iter);
 
-    /* HKEY_CURRENT_USER —— 用户级配置，对应 ~/.config */
-    gtk_tree_store_append(self->store, &user, &computer);
-    gtk_tree_store_set(self->store, &user,
+    /* HKEY_CURRENT_USER —— 用户级配置，默认 ~/.config（LR_TEST_CONFIG 可覆盖） */
+    gtk_tree_store_append(self->store, &user_iter, &computer_iter);
+    gtk_tree_store_set(self->store, &user_iter,
                        COL_ICON, self->icon_folder,
                        COL_NAME, "HKEY_CURRENT_USER",
-                       COL_PATH, config,
+                       COL_PATH, (char *)config,
                        COL_KIND, LR_SCAN_DIR,
                        COL_FORMAT, LR_FORMAT_UNKNOWN,
                        COL_LOADED, FALSE,
                        -1);
-    add_dummy_child(self, &user);
+    add_dummy_child(self, &user_iter);
 
-    /* HKEY_SYSTEM_BOOT —— 引导目录，对应 /boot */
-    gtk_tree_store_append(self->store, &boot, &computer);
-    gtk_tree_store_set(self->store, &boot,
+    /* HKEY_SYSTEM_BOOT —— 引导目录，默认 /boot（LR_TEST_BOOT 可覆盖） */
+    gtk_tree_store_append(self->store, &boot_iter, &computer_iter);
+    gtk_tree_store_set(self->store, &boot_iter,
                        COL_ICON, self->icon_folder,
                        COL_NAME, "HKEY_SYSTEM_BOOT",
-                       COL_PATH, "/boot",
+                       COL_PATH, (char *)boot,
                        COL_KIND, LR_SCAN_DIR,
                        COL_FORMAT, LR_FORMAT_UNKNOWN,
                        COL_LOADED, FALSE,
                        -1);
-    add_dummy_child(self, &boot);
-
-    g_free(config);
+    add_dummy_child(self, &boot_iter);
 }
 
 static GdkPixbuf *
@@ -345,50 +347,7 @@ on_popup_copy_name(GtkMenuItem *item, gpointer user_data)
     }
 }
 
-/* 尚未实现的功能：弹出提示 */
-static void
-on_popup_not_impl(GtkMenuItem *item, gpointer user_data)
-{
-    const gchar *label = user_data;
-    GtkWidget *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(item));
-    GtkWidget *dialog;
-
-    (void)item;
-    dialog = gtk_message_dialog_new(NULL, 0, GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                    "「%s」功能尚未实现，规划于后续版本。",
-                                    label);
-    g_signal_connect(dialog, "response",
-                     G_CALLBACK(lr_dialog_destroy_on_response), NULL);
-    lr_dialog_center_on(dialog, GTK_WINDOW(toplevel));
-}
-
-/* 新建 → 子菜单：文件夹 + 分割线 + 支持的文件格式（未实现，点击提示） */
-static void
-build_new_submenu(LrTreePane *self, GtkWidget *menu)
-{
-    const char *const *names;
-    GtkWidget *item;
-    gint i;
-
-    (void)self;
-    item = gtk_menu_item_new_with_label("文件夹");
-    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer) "新建文件夹");
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_separator_menu_item_new();
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    names = lr_format_new_file_names();
-    for (i = 0; names[i] != NULL; i++)
-    {
-        item = gtk_menu_item_new_with_label(names[i]);
-        g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                         (gpointer)names[i]);
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-    }
-}
-
+/* 右键菜单：只保留当前版本真实可用的动作（写操作随 v0.4 写回回归） */
 static void
 show_popup_menu(LrTreePane *self, GtkTreePath *path, GdkEventButton *event)
 {
@@ -410,56 +369,20 @@ show_popup_menu(LrTreePane *self, GtkTreePath *path, GdkEventButton *event)
 
     menu = gtk_menu_new();
 
-    /* 目录节点：展开/折叠（按当前状态显示） + 新建 */
+    /* 目录节点：展开/折叠（按当前状态显示） */
     if (kind == LR_SCAN_DIR)
     {
         expanded = gtk_tree_view_row_expanded(self->view, path);
-        item = gtk_menu_item_new_with_label(expanded ? "折叠" : "展开");
+        item = gtk_menu_item_new_with_label(expanded ? _("Collapse") : _("Expand"));
         g_signal_connect(item, "activate",
                          G_CALLBACK(on_popup_expand_collapse), self);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
         item = gtk_separator_menu_item_new();
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-        item = gtk_menu_item_new_with_label("新建");
-        {
-            GtkWidget *new_sub = gtk_menu_new();
-            build_new_submenu(self, new_sub);
-            gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), new_sub);
-        }
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     }
 
-    item = gtk_menu_item_new_with_label("查找");
-    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer) "查找");
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("删除");
-    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer) "删除");
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("重命名");
-    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer) "重命名");
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("导出");
-    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer) "导出");
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("权限");
-    g_signal_connect(item, "activate", G_CALLBACK(on_popup_not_impl),
-                     (gpointer) "权限");
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_separator_menu_item_new();
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("复制项名称");
+    item = gtk_menu_item_new_with_label(_("Copy Name"));
     g_signal_connect(item, "activate", G_CALLBACK(on_popup_copy_name), self);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
@@ -538,6 +461,8 @@ lr_tree_pane_new(void)
 
     gtk_tree_view_set_headers_visible(self->view, FALSE);
     gtk_container_add(GTK_CONTAINER(self->widget), GTK_WIDGET(self->view));
+    atk_object_set_name(gtk_widget_get_accessible(GTK_WIDGET(self->view)),
+                        _("Directory tree"));
 
     pix = gtk_cell_renderer_pixbuf_new();
     txt = gtk_cell_renderer_text_new();

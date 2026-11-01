@@ -2,6 +2,7 @@
 #include "core/limits.h"
 
 #include <string.h>
+#include <glib/gi18n.h>
 #include <json-glib/json-glib.h>
 #include "core/parsers/ini.h"
 #include "core/parsers/json.h"
@@ -10,6 +11,7 @@
 #include "core/parsers/systemd.h"
 #include "core/parsers/apt.h"
 #include "core/parsers/xml.h"
+#include "core/parsers/toml.h"
 
 static gboolean
 has_systemd_extension(const char *path)
@@ -25,6 +27,21 @@ has_systemd_extension(const char *path)
             return TRUE;
     }
     return FALSE;
+}
+
+/* 跳过 UTF-8 BOM（若有），返回调整后的起始位置与长度 */
+static const char *
+skip_utf8_bom(const char *content, gsize len, gsize *out_len)
+{
+    if (content != NULL && len >= 3 &&
+        (guchar)content[0] == 0xEF && (guchar)content[1] == 0xBB &&
+        (guchar)content[2] == 0xBF)
+    {
+        *out_len = len - 3;
+        return content + 3;
+    }
+    *out_len = len;
+    return content;
 }
 
 /* 「关键字-参数」行中参数为多词（自然语言特征）的比例阈值，超过则视为普通文本 */
@@ -193,6 +210,13 @@ sniff_systemd(LrSniffCtx *ctx)
     return has_systemd_extension(ctx->path);
 }
 
+/* TOML：以 .toml 后缀为主；其余交给 INI 的“节 + 键值对”兜底识别 */
+static gboolean
+sniff_toml(LrSniffCtx *ctx)
+{
+    return g_str_has_suffix(ctx->path, ".toml");
+}
+
 static gboolean
 sniff_json(LrSniffCtx *ctx)
 {
@@ -279,26 +303,33 @@ typedef struct
 } LrFormatDriver;
 
 static const LrFormatDriver k_drivers[] = {
-    {"systemd unit", LR_FORMAT_SYSTEMD, sniff_systemd, lr_parse_systemd},
-    {"JSON", LR_FORMAT_JSON, sniff_json, lr_parse_json},
-    {"XML", LR_FORMAT_XML, sniff_xml, lr_parse_xml},
-    {"apt 配置", LR_FORMAT_APT, sniff_apt, lr_parse_apt},
-    {"INI", LR_FORMAT_INI, sniff_ini, lr_parse_ini},
-    {"键值对", LR_FORMAT_KV, sniff_kv, lr_parse_kv},
-    {"关键字-参数", LR_FORMAT_KEYWORD, sniff_keyword, lr_parse_keyword},
+    {N_("systemd Unit"), LR_FORMAT_SYSTEMD, sniff_systemd, lr_parse_systemd},
+    {N_("JSON"), LR_FORMAT_JSON, sniff_json, lr_parse_json},
+    {N_("XML"), LR_FORMAT_XML, sniff_xml, lr_parse_xml},
+    {N_("APT Configuration"), LR_FORMAT_APT, sniff_apt, lr_parse_apt},
+    {N_("TOML"), LR_FORMAT_TOML, sniff_toml, lr_parse_toml},
+    {N_("INI"), LR_FORMAT_INI, sniff_ini, lr_parse_ini},
+    {N_("Key-value"), LR_FORMAT_KV, sniff_kv, lr_parse_kv},
+    {N_("Keyword-Argument"), LR_FORMAT_KEYWORD, sniff_keyword, lr_parse_keyword},
 };
 
 LrConfigFormat
 lr_format_detect_content(const char *path, const char *content, gsize len)
 {
     LrSniffCtx ctx = {content, len, path, {0}, FALSE};
+    const char *body;
+    gsize body_len;
     guint i;
 
     if (content == NULL)
         return LR_FORMAT_UNKNOWN;
 
+    body = skip_utf8_bom(content, len, &body_len);
+    ctx.content = body;
+    ctx.len = body_len;
+
     /* 脚本解释器（shebang #!）：一律以文本形式打开，不做配置解析 */
-    if (g_str_has_prefix(content, "#!"))
+    if (g_str_has_prefix(body, "#!"))
         return LR_FORMAT_UNKNOWN;
 
     for (i = 0; i < G_N_ELEMENTS(k_drivers); i++)
@@ -331,19 +362,20 @@ lr_format_name(LrConfigFormat fmt)
 
     for (i = 0; i < G_N_ELEMENTS(k_drivers); i++)
         if (k_drivers[i].id == fmt)
-            return k_drivers[i].name;
-    return "未知格式";
+            return _(k_drivers[i].name);
+    return _("Unknown");
 }
 
 /* 新建文件时可选的格式显示名（静态数组，NULL 结尾） */
 static const char *const k_new_file_names[] = {
-    "INI 文件",
-    "键值对文件",
-    "JSON 文件",
-    "XML 文件",
-    "systemd unit 文件",
-    "apt 配置",
-    "关键字-参数文件",
+    N_("INI File"),
+    N_("Key-Value Pair File"),
+    N_("JSON File"),
+    N_("XML File"),
+    N_("systemd Unit File"),
+    N_("APT Configuration"),
+    N_("Keyword-Argument File"),
+    N_("TOML File"),
     NULL,
 };
 
@@ -368,15 +400,19 @@ LrConfigFile *
 lr_parse_config_content(const char *path, const char *content, gsize len)
 {
     LrConfigFile *file = lr_config_file_new(path);
-    LrConfigFormat fmt = lr_format_detect_content(path, content, len);
+    const char *body;
+    gsize body_len;
+    LrConfigFormat fmt;
     guint i;
     gboolean ok = FALSE;
 
+    body = skip_utf8_bom(content, len, &body_len);
+    fmt = lr_format_detect_content(path, body, body_len);
     for (i = 0; i < G_N_ELEMENTS(k_drivers); i++)
     {
         if (k_drivers[i].id == fmt)
         {
-            ok = k_drivers[i].parse(content, len, file);
+            ok = k_drivers[i].parse(body, body_len, file);
             break;
         }
     }

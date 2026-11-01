@@ -1,8 +1,16 @@
 project('linux-regedit', 'c',
-  version: '0.1.0',
+  version: '0.4.0-dev',
   license: 'GPL-3.0-or-later',
   meson_version: '>=0.60',
   default_options: ['c_std=c11', 'warning_level=3', 'buildtype=debugoptimized'])
+
+i18n = import('i18n')
+
+add_project_arguments(
+  '-DGETTEXT_PACKAGE="' + meson.project_name() + '"',
+  '-DLOCALEDIR="' + join_paths(get_option('prefix'), get_option('localedir')) + '"',
+  '-DLR_APP_VERSION="' + meson.project_version() + '"',
+  language: 'c')
 
 glibdep = dependency('glib-2.0')
 giodep = dependency('gio-2.0')
@@ -24,6 +32,9 @@ endif
 # 核心库：纯 GLib，不含 UI，便于单元测试
 lr_core_sources = files(
   'src/core/value.c',
+  'src/core/text_file.c',
+  'src/core/edits.c',
+  'src/core/write.c',
   'src/core/format.c',
   'src/core/scanner.c',
   'src/core/parsers/common.c',
@@ -34,6 +45,7 @@ lr_core_sources = files(
   'src/core/parsers/json.c',
   'src/core/parsers/apt.c',
   'src/core/parsers/xml.c',
+  'src/core/parsers/toml.c',
 )
 
 lr_core_inc = include_directories('src')
@@ -50,9 +62,11 @@ executable('linux-regedit',
   'src/ui/dialog_utils.c',
   'src/ui/favorites.c',
   'src/ui/export.c',
+  'src/ui/file_tools.c',
   'src/ui/main_window.c',
   'src/ui/tree_pane.c',
   'src/ui/value_pane.c',
+  'src/ui/test_roots.c',
   'src/ui/window_state.c',
   link_with: lr_core,
   dependencies: [gtkdep, giodep, jsondep],
@@ -66,6 +80,8 @@ if get_option('tests')
     'tests/test_value.c',
     'tests/test_parsers.c',
     'tests/test_scanner.c',
+    'tests/test_writeback.c',
+    'tests/test_write.c',
     'tests/test_runner.c',
     link_with: lr_core,
     dependencies: [glibdep, giodep, jsondep],
@@ -75,3 +91,13 @@ if get_option('tests')
   test('core-tests', test_runner,
        workdir: meson.project_source_root())
 endif
+
+subdir('po')
+
+install_data('data/linux-regedit.desktop',
+             install_dir: get_option('datadir') / 'applications')
+install_data('data/linux-regedit.svg',
+             install_dir: get_option('datadir') / 'icons' / 'hicolor' /
+                          'scalable' / 'apps')
+install_data('data/linux-regedit.appdata.xml',
+             install_dir: get_option('datadir') / 'metainfo')

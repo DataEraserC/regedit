@@ -66,7 +66,7 @@ gboolean
 lr_split_key_value(const char *line, const char *delims,
                    char **key_out, char **value_out)
 {
-    const char *p;
+    const char *p, *split;
     gboolean in_quotes = FALSE;
 
     *key_out = NULL;
@@ -75,21 +75,43 @@ lr_split_key_value(const char *line, const char *delims,
     if (line == NULL)
         return FALSE;
 
+    /* 优先按显式赋值符（= / :）切分，避免 key = value 中空格抢先 */
+    split = NULL;
     p = line;
     while (*p != '\0')
     {
         if (*p == '"')
             in_quotes = !in_quotes;
-        if (!in_quotes && strchr(delims, *p) != NULL)
+        if (!in_quotes && (*p == '=' || *p == ':'))
+        {
+            split = p;
             break;
+        }
         p++;
     }
 
-    if (*p == '\0')
-        return FALSE; /* 未找到分隔符 */
+    /* 无赋值符时退回按空白/分隔符切分（如 "key value" 风格） */
+    if (split == NULL)
+    {
+        in_quotes = FALSE;
+        p = line;
+        while (*p != '\0')
+        {
+            if (*p == '"')
+                in_quotes = !in_quotes;
+            if (!in_quotes && strchr(delims, *p) != NULL)
+            {
+                split = p;
+                break;
+            }
+            p++;
+        }
+        if (split == NULL)
+            return FALSE; /* 未找到分隔符 */
+    }
 
-    *key_out = g_strstrip(g_strndup(line, (gsize)(p - line)));
-    *value_out = g_strstrip(g_strdup(p + 1));
+    *key_out = g_strstrip(g_strndup(line, (gsize)(split - line)));
+    *value_out = g_strstrip(g_strdup(split + 1));
 
     if (**key_out == '\0')
     {
@@ -142,6 +164,7 @@ lr_parse_section_kv(const char *content, gsize length, LrConfigFile *file)
     gchar **linep;
     char *section = NULL;
     char *pending_comment = NULL;
+    guint line_idx = 0;
 
     (void)length;
     if (content == NULL)
@@ -152,8 +175,9 @@ lr_parse_section_kv(const char *content, gsize length, LrConfigFile *file)
 
     lines = g_strsplit(content, "\n", -1);
 
-    for (linep = lines; linep != NULL && *linep != NULL; linep++)
+    for (line_idx = 0; lines[line_idx] != NULL; line_idx++)
     {
+        linep = &lines[line_idx];
         char *line = g_strstrip(*linep);
 
         if (*line == '\0')
@@ -187,6 +211,7 @@ lr_parse_section_kv(const char *content, gsize length, LrConfigFile *file)
             LrConfigItem *item = lr_config_item_new(
                 key, value, lr_value_detect_type(value), section,
                 pending_comment != NULL ? pending_comment : inline_comment);
+            item->source_line = line_idx;
             if (pending_comment != NULL && inline_comment != NULL)
             {
                 char *merged = g_strconcat(pending_comment, "\n",

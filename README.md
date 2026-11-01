@@ -24,6 +24,11 @@
 
 - 🗂️ **「计算机」根 + 三个根键**：`HKEY_LOCAL_MACHINE`(`/etc`)、`HKEY_CURRENT_USER`(`~/.config`)、`HKEY_SYSTEM_BOOT`(`/boot`)，左侧树懒加载展示目录结构，同级目录以虚线连接。
 - 🔍 **基于内容嗅探的格式识别**：Linux 配置无法仅凭后缀判断，程序读取文件内容猜测格式——`systemd 扩展名 → JSON → XML → apt 嵌套块 → INI 节 → key=value → 关键字-参数 → 未知`；`{` 开头判定为 JSON，`[` 开头需验证为合法 JSON 数组（否则按 INI 节处理）。
+- 🧭 **表内查找**：`Edit → Find…` 或 `Ctrl+F` 打开查找对话框，`F3` 继续查找；按名称/数据/备注匹配（大小写不敏感），命中项自动选中并滚动，循环遍历。
+- 🎛️ **类型强制显示**：右键配置项 → `Type` 可选择 `String / Boolean / Number` 强制显示，或选 `Detect automatically` 恢复自动识别（仅内存，不写盘）。
+- 🗂️ **备份**：`File → Backup Current File...` 把当前文件复制为时间戳副本（`$XDG_DATA_HOME/linux-regedit/backups/`），不改动系统原文件。
+- 💾 **保存（受限写回）**：`File → Save Changes...`（Ctrl+S）支持 KV/INI/systemd/TOML/keyword 与 apt 块内叶子赋值的**改值、软删除（注释掉）、重命名键**；JSON/XML 及其他不支持的操作保持只读并明确提示。
+- 🔁 **文件对比**：`File → Compare with File...` 选择另一文件后用 `diff -u` 展示逐行差异（等宽、可复制视图）。
 - 🧮 **智能类型识别**：自动区分配置值的类型——
   - `Number`（整数 / 浮点 / 十六进制，类比 `REG_DWORD`）
   - `String`（类比 `REG_SZ`）
@@ -75,6 +80,7 @@
 | 格式 | 语法要点 | 示例位置 |
 | --- | --- | --- |
 | **INI**（分节键值） | `[节]` + `key = value`；注释 `;` / `#` | `~/.config` 下大量应用配置 |
+| **TOML** | `[表]` + `key = value`；`#` 注释；值自动去引号（复合值暂以文本展示） | `~/.config/**/*.toml` |
 | **扁平 KeyValue** | `key=value` / `key value`，无分节 | `/etc/environment` 等 |
 | **systemd unit** | `[Unit]/[Service]` 等节 + `Key=Value` | `/etc/systemd/system/` |
 | **关键字-参数** | `关键字 参数`（空白/Tab 分隔），如 sshd_config | `/etc/ssh/sshd_config` |
@@ -144,6 +150,19 @@ meson test -C builddir
 
 > 单元测试除临时构造的输入外，还会读取 `testdata/` 下每种格式的**真实示例文件**并逐项断言解析结果（格式识别、类型、注释、启用状态等），作为回归保护；这些示例也可直接用 `linux-regedit testdata/<文件>` 在界面中人工预览。
 
+### GUI / 无障碍回归（随本仓库维护）
+
+`tests/gui/` 下是用 **AT-SPI（无障碍树）** 驱动真实界面的回归用例，不依赖截图：
+
+```bash
+meson setup builddir && meson compile -C builddir
+python3 -m pytest tests/gui -v
+```
+
+运行前提：可用的 X/AT-SPI 会话（本地 `:2`，或 `xvfb-run`）；测试驱动库
+[spire](https://github.com/heyManNice/spire)（通过 `SPIRE_PATH` 指定，或放在
+仓库旁的 `../spire`）。用例固定走英文界面，保证在任何机器上可复现。
+
 > ⚠️ 提示：`/etc` 下部分文件需要 root 权限才能读取，此时可用 `sudo` 运行以获得完整目录树。
 
 ---
@@ -188,10 +207,11 @@ linux-regedit/
 - [x] v0.2：备注「上方最近一条」、启用列、被注释配置识别
 - [x] v0.2：man 说明面板、目录树过滤（超大/非文本/空目录）、shebang 文本兜底
 - [x] v0.3：`JSON` 结构化格式支持（树形可展开列表）
-- [ ] v0.3：搜索 / 过滤、类型强制显示
-- [ ] v0.4：编辑配置并**写回文件**（含权限处理与安全校验），支持 `sudo` 提权流程
-- [ ] v0.5：`TOML` 结构化格式支持
-- [ ] v0.6：对比 / 导出 / 备份等增强工具
+- [x] v0.3：搜索 / 查找（当前配置文件内，Ctrl+F / F3）
+- [x] v0.3：类型强制显示（右键 Type 菜单 / 自动识别）
+- [ ] v0.4：编辑配置并**写回文件**（含权限处理与安全校验），支持 `sudo` 提权流程 —— [安全设计文档](docs/design/write-back.md)
+- [x] v0.5：`TOML` 结构化格式支持（表 + 键值对行模型，复合值暂以文本展示）
+- [x] v0.6：备份当前文件（时间戳副本）与文件对比（diff -u 视图）
 
 ---
 

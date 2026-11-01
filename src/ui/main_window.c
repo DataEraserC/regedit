@@ -2,24 +2,109 @@
 #include "ui/window_state.h"
 #include "ui/favorites.h"
 #include "ui/export.h"
+#include "ui/file_tools.h"
 #include "ui/dialog_utils.h"
+#include "ui/test_roots.h"
 #include "core/format.h"
 
 #include <gtk/gtk.h>
+#include <gdk/gdkkeysyms.h>
+#include <glib/gi18n.h>
 #include <string.h>
 #include <sys/utsname.h>
+
+/* 窗口标题：Regedit（未打开任何内容）或 “路径 — Regedit” */
+static void
+update_window_title(LrMainWindow *mw, const char *path)
+{
+    gchar *title;
+
+    if (path == NULL || *path == '\0')
+        title = g_strdup(_("Regedit"));
+    else
+        title = g_strdup_printf("%s — %s", path, _("Regedit"));
+    gtk_window_set_title(GTK_WINDOW(mw->window), title);
+    g_free(title);
+}
+
+typedef enum
+{
+    LR_SWITCH_PROCEED,
+    LR_SWITCH_CANCEL,
+} LrSwitchAction;
+
+/* 有未保存修改时，切换前询问：保存并继续 / 丢弃 / 取消 */
+static LrSwitchAction
+confirm_unsaved_switch(LrMainWindow *mw)
+{
+    GtkWidget *dialog;
+    gint response;
+    const gchar *msg;
+    gboolean can_save = lr_value_pane_can_save(mw->value);
+
+    if (!lr_value_pane_is_dirty(mw->value))
+        return LR_SWITCH_PROCEED;
+
+    msg = can_save
+              ? _("Save changes before switching to another file?")
+              : _("Unsaved changes will be lost when switching "
+                  "(this file type is read-only).");
+    dialog = gtk_message_dialog_new(
+        GTK_WINDOW(mw->window), GTK_DIALOG_MODAL |
+            GTK_DIALOG_DESTROY_WITH_PARENT,
+        GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE, "%s", msg);
+
+    if (can_save)
+        gtk_dialog_add_buttons(GTK_DIALOG(dialog),
+                               _("Save & Switch"), 1,
+                               _("Discard"), 2,
+                               _("Cancel"), GTK_RESPONSE_CANCEL, NULL);
+    else
+        gtk_dialog_add_buttons(GTK_DIALOG(dialog),
+                               _("Discard"), 2,
+                               _("Cancel"), GTK_RESPONSE_CANCEL, NULL);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), 1);
+
+    response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+
+    if (response == 1)
+    {
+        GError *err = NULL;
+        if (!lr_value_pane_save_changes(mw->value, &err))
+        {
+            GtkWidget *e = gtk_message_dialog_new(
+                GTK_WINDOW(mw->window), GTK_DIALOG_DESTROY_WITH_PARENT,
+                GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "%s",
+                err != NULL ? err->message : _("Unknown Error"));
+            g_signal_connect(e, "response",
+                             G_CALLBACK(lr_dialog_destroy_on_response), NULL);
+            lr_dialog_center_on(e, GTK_WINDOW(mw->window));
+            g_clear_error(&err);
+            return LR_SWITCH_CANCEL;
+        }
+        return LR_SWITCH_PROCEED;
+    }
+    if (response == 2)
+        return LR_SWITCH_PROCEED;
+    return LR_SWITCH_CANCEL;
+}
 
 static void
 open_path(LrMainWindow *mw, const char *path, gboolean is_dir)
 {
+    if (confirm_unsaved_switch(mw) == LR_SWITCH_CANCEL)
+        return;
+
     /* 计算机虚拟根（空路径） */
     if (path == NULL || *path == '\0')
     {
-        gtk_entry_set_text(GTK_ENTRY(mw->location_entry), "计算机");
+        gtk_entry_set_text(GTK_ENTRY(mw->location_entry), _("Computer"));
         lr_value_pane_clear(mw->value);
         g_free(mw->current_path);
         mw->current_path = NULL;
         lr_window_state_set_path(mw->win_state, NULL);
+        update_window_title(mw, NULL);
         return;
     }
 
@@ -28,6 +113,7 @@ open_path(LrMainWindow *mw, const char *path, gboolean is_dir)
     g_free(mw->current_path);
     mw->current_path = g_strdup(path);
     lr_window_state_set_path(mw->win_state, path);
+    update_window_title(mw, path);
 
     if (is_dir)
         lr_value_pane_clear(mw->value);
@@ -42,12 +128,56 @@ on_tree_select(const char *path, gboolean is_dir, gpointer user_data)
     open_path(mw, path, is_dir);
 }
 
+/* 路径是否位于某根目录（含边界：/etc 不匹配 /etc2） */
+static gboolean
+path_inside_root(const char *path, const char *root)
+{
+    gsize rl;
+
+    if (path == NULL || root == NULL || *root == '\0')
+        return FALSE;
+    rl = strlen(root);
+    if (strncmp(path, root, rl) != 0)
+        return FALSE;
+    if (path[rl] == '\0')
+        return TRUE;
+    return path[rl] == G_DIR_SEPARATOR;
+}
+
+static gboolean on_reopen_idle(gpointer user_data);
+
 /* 命令行 / 外部调用：直接打开指定文件（目录则仅定位到树中） */
 void lr_main_window_open_file(LrMainWindow *mw, const char *path)
 {
     gboolean is_dir = g_file_test(path, G_FILE_TEST_IS_DIR);
+
+    /* 命令行/外部打开优先于“恢复上次路径”：取消待执行 idle，
+     * 避免它随后选中旧路径、把刚打开的内容清空 */
+    if (mw->reveal_idle != 0)
+    {
+        g_source_remove(mw->reveal_idle);
+        mw->reveal_idle = 0;
+    }
+    g_clear_pointer(&mw->pending_path, g_free);
+    if (mw->reopen_idle != 0)
+    {
+        g_source_remove(mw->reopen_idle);
+        mw->reopen_idle = 0;
+    }
+    g_clear_pointer(&mw->reopen_path, g_free);
+
     open_path(mw, path, is_dir);
-    lr_tree_pane_reveal_path(mw->tree, path);
+    if (path_inside_root(path, lr_etc_root()) ||
+        path_inside_root(path, lr_config_root()) ||
+        path_inside_root(path, lr_boot_root()))
+    {
+        lr_tree_pane_reveal_path(mw->tree, path);
+    }
+    else
+    {
+        mw->reopen_path = g_strdup(path);
+        mw->reopen_idle = g_idle_add(on_reopen_idle, mw);
+    }
 }
 
 static void
@@ -66,6 +196,35 @@ on_toggle_location_bar(GtkCheckMenuItem *item, gpointer user_data)
     gboolean active = gtk_check_menu_item_get_active(item);
     if (mw->location_bar != NULL)
         gtk_widget_set_visible(mw->location_bar, active);
+}
+
+/* 值面板内存编辑状态变化：显示/隐藏“未保存”提示条 */
+static void
+on_value_dirty_changed(gboolean dirty, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+
+    if (mw->dirty_bar == NULL)
+        return;
+    if (dirty)
+    {
+        const gchar *hint = lr_value_pane_can_save(mw->value)
+                                ? _("Edits are not saved until you choose "
+                                    "File → Save Changes.")
+                                : _("This file type is read-only: edits stay "
+                                    "in memory and are lost when you switch "
+                                    "files.");
+        gchar *markup = g_markup_printf_escaped(
+            "<span foreground=\"#b45309\">⚠ %s</span>",
+            hint);
+        gtk_label_set_markup(GTK_LABEL(mw->dirty_bar), markup);
+        g_free(markup);
+        gtk_widget_set_visible(mw->dirty_bar, TRUE);
+    }
+    else
+    {
+        gtk_widget_set_visible(mw->dirty_bar, FALSE);
+    }
 }
 
 /* 编辑→复制项名称：把当前路径复制到剪贴板 */
@@ -88,6 +247,42 @@ on_quit(GtkWidget *widget, gpointer user_data)
     GtkWidget *window = user_data;
     (void)widget;
     gtk_widget_destroy(window);
+}
+
+static void
+on_backup_current_file(GtkWidget *widget, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    (void)widget;
+    lr_backup_current_file(GTK_WINDOW(mw->window), mw->current_path);
+}
+
+static void
+on_compare_with_file(GtkWidget *widget, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    (void)widget;
+    lr_compare_with_file(GTK_WINDOW(mw->window), mw->current_path);
+}
+
+static void
+on_save_changes(GtkWidget *widget, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    GError *err = NULL;
+    (void)widget;
+
+    if (!lr_value_pane_save_changes(mw->value, &err))
+    {
+        GtkWidget *dialog = gtk_message_dialog_new(
+            GTK_WINDOW(mw->window), GTK_DIALOG_DESTROY_WITH_PARENT,
+            GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "%s",
+            err != NULL ? err->message : _("Unknown Error"));
+        g_signal_connect(dialog, "response",
+                         G_CALLBACK(lr_dialog_destroy_on_response), NULL);
+        lr_dialog_center_on(dialog, GTK_WINDOW(mw->window));
+        g_clear_error(&err);
+    }
 }
 
 /* ========== 关于对话框（模仿 regedit：图标 + 系统名 + 系统信息） ========== */
@@ -179,7 +374,7 @@ on_about(GtkWidget *widget, gpointer user_data)
 
     (void)widget;
 
-    dialog = gtk_dialog_new_with_buttons("关于“注册表编辑器”", NULL, 0, "确定",
+    dialog = gtk_dialog_new_with_buttons(_("About Regedit"), NULL, 0, _("OK"),
                                          GTK_RESPONSE_CLOSE, NULL);
     /* 关于窗口宽度设窄一些 */
     gtk_window_set_default_size(GTK_WINDOW(dialog), 760, -1);
@@ -198,9 +393,9 @@ on_about(GtkWidget *widget, gpointer user_data)
                                  have_uts ? uts.release : "");
     version = os_release_value("VERSION");
     if (version == NULL)
-        version = g_strdup("未知");
-    kernel = g_strdup(have_uts ? uts.release : "未知");
-    init_prog = g_strdup("未知");
+        version = g_strdup(_("Unknown"));
+    kernel = g_strdup(have_uts ? uts.release : _("Unknown"));
+    init_prog = g_strdup(_("Unknown"));
     if (g_file_get_contents("/proc/1/comm", &tmp, NULL, NULL))
     {
         gchar *s = g_strstrip(tmp);
@@ -213,7 +408,7 @@ on_about(GtkWidget *widget, gpointer user_data)
     if (session == NULL || *session == '\0')
         session = g_strdup(g_getenv("WAYLAND_DISPLAY") != NULL ? "wayland"
                            : g_getenv("DISPLAY") != NULL       ? "x11"
-                                                               : "未知");
+                                                               : _("Unknown"));
     user = g_strdup(g_get_user_name());
 
     /* 顶部：放大 3 倍的系统图标 + 系统名（无“注册表编辑器”字样） */
@@ -259,28 +454,31 @@ on_about(GtkWidget *widget, gpointer user_data)
     about_add_line(right, tmp);
     g_free(tmp);
 
+    /* 行1.5：应用自身版本（整活不改真实版本） */
+    tmp = g_strdup_printf("linux-regedit %s", LR_APP_VERSION);
+    about_add_line(right, tmp);
+    g_free(tmp);
+
     /* 行2：版本 + 系统信息（内核/init/图形服务器）；去掉版本代号括号 */
     {
         gchar *paren = strstr(version, " (");
         if (paren != NULL)
             *paren = '\0';
     }
-    tmp = g_strdup_printf("版本 %s（Linux %s，%s，%s）",
+    tmp = g_strdup_printf(_("Version %s (Linux %s, %s, %s)"),
                           version, kernel, init_prog, session);
     about_add_line(right, tmp);
     g_free(tmp);
 
     /* 行3：版权符号 + 文案 */
-    about_add_line(right, "© heyManNice 保留不了所有权利");
+    about_add_line(right, _("© heyManNice All rights reversed."));
 
     /* 空一行 */
     gtk_box_pack_start(GTK_BOX(right), gtk_label_new(""), FALSE, FALSE, 0);
 
     /* 开源声明（多行） */
     label = gtk_label_new(
-        "本 GNU/Linux 操作系统及其组件基于自由及开源软件构建，由各自的"
-        "版权所有人根据 GPL、LGPL、MIT、Apache 等开源许可证授权分发。"
-        "系统中的内核、工具及用户界面受相关开源许可证与版权法保护。");
+        _("This GNU/Linux operating system and its components are built upon Free and Open-Source Software (FOSS) and are distributed by their respective copyright holders under the terms of open source licenses, including GPL, LGPL, MIT, and Apache licenses. The kernel, tools, and user interface contained in the system are protected under the applicable open source licenses and copyright laws."));
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
     gtk_label_set_justify(GTK_LABEL(label), GTK_JUSTIFY_LEFT);
@@ -292,13 +490,13 @@ on_about(GtkWidget *widget, gpointer user_data)
                            0);
 
     /* 许可行 */
-    about_add_line(right, "根据开源许可条款，许可如下用户使用本产品：");
+    about_add_line(right, _("In accordance with open source licenses, the following users are allowed to use it"));
 
     /* 空一行 */
     gtk_box_pack_start(GTK_BOX(right), gtk_label_new(""), FALSE, FALSE, 0);
 
     /* 缩进 2 字符 + 当前用户名 */
-    tmp = g_strdup_printf("　　%s", user);
+    tmp = g_strdup_printf("\u3000\u3000%s", user);
     about_add_line(right, tmp);
     g_free(tmp);
 
@@ -307,11 +505,15 @@ on_about(GtkWidget *widget, gpointer user_data)
     /* 确定按钮与窗口边界留边距，按钮内部左右加内边距 */
     {
         static GtkCssProvider *ok_css = NULL;
-        GtkWidget *action = gtk_dialog_get_action_area(GTK_DIALOG(dialog));
         GtkWidget *ok = gtk_dialog_get_widget_for_response(
             GTK_DIALOG(dialog), GTK_RESPONSE_CLOSE);
 
-        gtk_container_set_border_width(GTK_CONTAINER(action), 12);
+        if (ok != NULL)
+        {
+            gtk_widget_set_margin_start(ok, 12);
+            gtk_widget_set_margin_end(ok, 12);
+            gtk_widget_set_margin_bottom(ok, 12);
+        }
 
         if (ok_css == NULL)
         {
@@ -342,23 +544,6 @@ on_about(GtkWidget *widget, gpointer user_data)
     lr_dialog_center_on(dialog, GTK_WINDOW(window));
 }
 
-/* 未实现功能：弹出提示（独立子窗口） */
-static void
-on_new_not_impl(GtkMenuItem *item, gpointer user_data)
-{
-    const gchar *label = user_data;
-    GtkWidget *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(item));
-    GtkWidget *dialog;
-
-    (void)item;
-    dialog = gtk_message_dialog_new(NULL, 0, GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-                                    "「%s」功能尚未实现，规划于后续版本。",
-                                    label);
-    g_signal_connect(dialog, "response",
-                     G_CALLBACK(lr_dialog_destroy_on_response), NULL);
-    lr_dialog_center_on(dialog, GTK_WINDOW(toplevel));
-}
-
 /* 编辑菜单「新建配置项」：在当前表格追加一行（仅内存） */
 static void
 on_new_value_item(GtkMenuItem *item, gpointer user_data)
@@ -367,46 +552,211 @@ on_new_value_item(GtkMenuItem *item, gpointer user_data)
     lr_value_pane_add_value(mw->value, gtk_menu_item_get_label(item));
 }
 
-/* 新建 → 子菜单（编辑菜单，更全面）：文件夹 + 文件格式 + 分割线 + 配置项 */
+/* 新建 → 子菜单：当前表格追加一个配置项（仅内存，写回属未来 v0.4） */
 static void
 build_new_submenu(LrMainWindow *mw, GtkWidget *menu)
 {
-    const char *const *names;
+    const char *const *types = lr_value_type_names();
     GtkWidget *item;
     gint i;
 
-    item = gtk_menu_item_new_with_label("文件夹");
-    g_signal_connect(item, "activate", G_CALLBACK(on_new_not_impl),
-                     (gpointer) "新建文件夹");
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_separator_menu_item_new();
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    names = lr_format_new_file_names();
-    for (i = 0; names[i] != NULL; i++)
+    for (i = 0; types[i] != NULL; i++)
     {
-        item = gtk_menu_item_new_with_label(names[i]);
-        g_signal_connect(item, "activate", G_CALLBACK(on_new_not_impl),
-                         (gpointer)names[i]);
+        item = gtk_menu_item_new_with_label(types[i]);
+        g_signal_connect(item, "activate", G_CALLBACK(on_new_value_item),
+                         mw);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     }
+}
 
-    item = gtk_separator_menu_item_new();
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+/* ---------- 查找对话框（Edit → Find… / Ctrl+F / F3） ---------- */
 
-    /* 配置项：追加到当前表格（仅内存） */
+typedef struct
+{
+    LrMainWindow *mw;
+    GtkWidget *entry;
+    GtkWidget *status;
+    gchar *last_needle; /* 上次执行查找的词，用于区分 first/next */
+} FindCtx;
+
+static void
+find_destroy(FindCtx *ctx)
+{
+    if (ctx == NULL)
+        return;
+    g_free(ctx->last_needle);
+    g_free(ctx);
+}
+
+/* 执行一次查找：词未变且存在可继续状态时查找下一处，否则从头查找 */
+static gboolean
+find_do_next(FindCtx *ctx)
+{
+    LrMainWindow *mw = ctx->mw;
+    gchar *needle;
+    gboolean ok;
+    guint total = 0;
+
+    needle = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(ctx->entry))));
+    if (*needle == '\0')
     {
-        static const gchar *const types[] = {"Section", "String", "Boolean",
-                                             "Number", NULL};
-        for (i = 0; types[i] != NULL; i++)
+        g_free(needle);
+        gtk_label_set_text(GTK_LABEL(ctx->status),
+                           _("Type a search term."));
+        return FALSE;
+    }
+
+    if (lr_value_pane_search_has_query(mw->value) &&
+        ctx->last_needle != NULL &&
+        g_strcmp0(ctx->last_needle, needle) == 0)
+    {
+        ok = lr_value_pane_search_next(mw->value);
+        if (!ok)
+            gtk_label_set_text(GTK_LABEL(ctx->status),
+                               _("No matches found."));
+    }
+    else
+    {
+        g_free(ctx->last_needle);
+        ctx->last_needle = g_strdup(needle);
+        ok = lr_value_pane_search_first(mw->value, needle, &total);
+        if (!ok)
         {
-            item = gtk_menu_item_new_with_label(types[i]);
-            g_signal_connect(item, "activate", G_CALLBACK(on_new_value_item),
-                             mw);
-            gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+            gtk_label_set_text(GTK_LABEL(ctx->status),
+                               _("No matches found."));
+        }
+        else
+        {
+            gchar *msg = g_strdup_printf(_("Found %u match(es)."), total);
+            gtk_label_set_text(GTK_LABEL(ctx->status), msg);
+            g_free(msg);
         }
     }
+
+    g_free(needle);
+    return ok;
+}
+
+static void
+on_find_dialog_response(GtkDialog *dialog, gint response_id,
+                        gpointer user_data)
+{
+    FindCtx *ctx = user_data;
+
+    if (response_id == GTK_RESPONSE_ACCEPT)
+    {
+        find_do_next(ctx);
+        gtk_widget_grab_focus(ctx->entry);
+        return;
+    }
+    gtk_widget_destroy(GTK_WIDGET(dialog));
+}
+
+static void
+on_find_dialog_destroy(GtkWidget *dialog, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    FindCtx *ctx = g_object_get_data(G_OBJECT(dialog), "lr-find-ctx");
+
+    if (mw != NULL && mw->find_dialog == dialog)
+        mw->find_dialog = NULL;
+    find_destroy(ctx);
+}
+
+static void
+open_find_dialog(LrMainWindow *mw)
+{
+    GtkWidget *dialog, *content, *hbox, *label, *status;
+    GtkWidget *entry;
+    FindCtx *ctx;
+
+    if (mw->find_dialog != NULL)
+    {
+        gtk_window_present(GTK_WINDOW(mw->find_dialog));
+        return;
+    }
+
+    dialog = gtk_dialog_new_with_buttons(
+        _("Find"), GTK_WINDOW(mw->window), GTK_DIALOG_DESTROY_WITH_PARENT,
+        _("Cancel"), GTK_RESPONSE_CANCEL, _("Find Next"),
+        GTK_RESPONSE_ACCEPT, NULL);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+
+    ctx = g_new0(FindCtx, 1);
+    ctx->mw = mw;
+    g_object_set_data(G_OBJECT(dialog), "lr-find-ctx", ctx);
+    g_signal_connect(dialog, "response",
+                     G_CALLBACK(on_find_dialog_response), ctx);
+    g_signal_connect(dialog, "destroy",
+                     G_CALLBACK(on_find_dialog_destroy), mw);
+
+    content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    label = gtk_label_new(_("Find what:"));
+    entry = gtk_entry_new();
+    atk_object_set_name(gtk_widget_get_accessible(entry), _("Find what"));
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(hbox), entry, TRUE, TRUE, 0);
+
+    status = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(status), 0.0f);
+    atk_object_set_name(gtk_widget_get_accessible(status), _("Find status"));
+    gtk_label_set_text(GTK_LABEL(status),
+                       _("Searches the currently opened file."));
+
+    gtk_box_pack_start(GTK_BOX(content), hbox, FALSE, FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(content), status, FALSE, FALSE, 4);
+    gtk_widget_set_margin_start(hbox, 8);
+    gtk_widget_set_margin_end(hbox, 8);
+
+    ctx->entry = entry;
+    ctx->status = status;
+    mw->find_dialog = dialog;
+
+    gtk_widget_show_all(dialog);
+    lr_dialog_center_on(dialog, GTK_WINDOW(mw->window));
+    gtk_widget_grab_focus(entry);
+}
+
+static void
+on_find_activate(GtkWidget *widget, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    (void)widget;
+    open_find_dialog(mw);
+}
+
+static void
+on_find_next_activate(GtkWidget *widget, gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    (void)widget;
+
+    if (!lr_value_pane_search_next(mw->value))
+        open_find_dialog(mw);
+}
+
+/* Ctrl+F 打开查找；F3 继续查找（无结果时打开对话框） */
+static gboolean
+on_window_key_press(GtkWidget *widget, GdkEventKey *event,
+                    gpointer user_data)
+{
+    LrMainWindow *mw = user_data;
+    (void)widget;
+
+    if ((event->state & GDK_CONTROL_MASK) != 0 && event->keyval == GDK_KEY_f)
+    {
+        open_find_dialog(mw);
+        return TRUE;
+    }
+    if (event->keyval == GDK_KEY_F3)
+    {
+        if (!lr_value_pane_search_next(mw->value))
+            open_find_dialog(mw);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static GtkWidget *
@@ -415,37 +765,51 @@ build_menubar(LrMainWindow *mw)
     GtkWidget *menubar = gtk_menu_bar_new();
     GtkWidget *menu, *menu_item, *item;
 
-    /* 文件：导入 / 导出 / 打印 / 退出 */
-    menu_item = gtk_menu_item_new_with_label("文件");
+    /* 文件：导出 / 备份 / 对比 / 退出 */
+    menu_item = gtk_menu_item_new_with_label(_("File"));
     menu = gtk_menu_new();
 
-    item = gtk_menu_item_new_with_label("导入…");
-    gtk_widget_set_sensitive(item, FALSE); /* 占位 */
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("导出…");
+    item = gtk_menu_item_new_with_label(_("Export..."));
     g_signal_connect(item, "activate", G_CALLBACK(lr_export_show_dialog), mw);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("打印…");
-    gtk_widget_set_sensitive(item, FALSE);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     item = gtk_separator_menu_item_new();
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
-    item = gtk_menu_item_new_with_label("退出");
+    item = gtk_menu_item_new_with_label(_("Backup Current File..."));
+    g_signal_connect(item, "activate", G_CALLBACK(on_backup_current_file), mw);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label(_("Compare with File..."));
+    g_signal_connect(item, "activate", G_CALLBACK(on_compare_with_file), mw);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label(_("Save Changes..."));
+    g_signal_connect(item, "activate", G_CALLBACK(on_save_changes), mw);
+    {
+        GtkAccelGroup *accel = gtk_accel_group_new();
+        gtk_window_add_accel_group(GTK_WINDOW(mw->window), accel);
+        gtk_widget_add_accelerator(
+            item, "activate", accel, GDK_KEY_s,
+            GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
+    }
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label(_("Quit"));
     g_signal_connect(item, "activate", G_CALLBACK(on_quit), mw->window);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
-    /* 编辑：新建 / 权限 / 删除 / 重命名 / 复制项名称 / 查找 / 查找下一个 */
-    menu_item = gtk_menu_item_new_with_label("编辑");
+    /* 编辑：新建（仅内存）/ 复制项名称 / 查找 */
+    menu_item = gtk_menu_item_new_with_label(_("Edit"));
     menu = gtk_menu_new();
 
-    item = gtk_menu_item_new_with_label("新建");
+    item = gtk_menu_item_new_with_label(_("New"));
     {
         GtkWidget *new_sub = gtk_menu_new();
         build_new_submenu(mw, new_sub);
@@ -453,74 +817,62 @@ build_menubar(LrMainWindow *mw)
     }
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
-    item = gtk_menu_item_new_with_label("权限…");
-    gtk_widget_set_sensitive(item, FALSE);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("删除");
-    gtk_widget_set_sensitive(item, FALSE);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("重命名");
-    gtk_widget_set_sensitive(item, FALSE);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("复制项名称");
+    item = gtk_menu_item_new_with_label(_("Copy Name"));
     g_signal_connect(item, "activate", G_CALLBACK(on_copy_item_name), mw);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     item = gtk_separator_menu_item_new();
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
-    item = gtk_menu_item_new_with_label("查找…");
-    gtk_widget_set_sensitive(item, FALSE);
+    item = gtk_menu_item_new_with_label(_("Find..."));
+    g_signal_connect(item, "activate", G_CALLBACK(on_find_activate), mw);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
-    item = gtk_menu_item_new_with_label("查找下一个");
-    gtk_widget_set_sensitive(item, FALSE);
+    item = gtk_menu_item_new_with_label(_("Find Next"));
+    g_signal_connect(item, "activate", G_CALLBACK(on_find_next_activate), mw);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
-    /* 查看：地址栏 / 拆分 / 刷新 / 字体 */
-    menu_item = gtk_menu_item_new_with_label("查看");
+    /* 查看：地址栏 / 刷新 */
+    menu_item = gtk_menu_item_new_with_label(_("View"));
     menu = gtk_menu_new();
 
-    item = gtk_check_menu_item_new_with_label("地址栏");
+    item = gtk_check_menu_item_new_with_label(_("Address"));
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(item), TRUE);
     g_signal_connect(item, "toggled", G_CALLBACK(on_toggle_location_bar), mw);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("拆分");
-    gtk_widget_set_sensitive(item, FALSE);
+    {
+        /* Ctrl+Shift+A：键盘可触达的地址栏开关（测试与用户同路径） */
+        GtkAccelGroup *accel = gtk_accel_group_new();
+        gtk_window_add_accel_group(GTK_WINDOW(mw->window), accel);
+        gtk_widget_add_accelerator(
+            item, "activate", accel, GDK_KEY_a,
+            GDK_CONTROL_MASK | GDK_SHIFT_MASK, GTK_ACCEL_VISIBLE);
+    }
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     item = gtk_separator_menu_item_new();
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
-    item = gtk_menu_item_new_with_label("刷新");
+    item = gtk_menu_item_new_with_label(_("Refresh"));
     g_signal_connect(item, "activate", G_CALLBACK(on_refresh), mw);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-    item = gtk_menu_item_new_with_label("字体…");
-    gtk_widget_set_sensitive(item, FALSE);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
     /* 收藏夹：添加/删除 + 分割线 + 收藏项（菜单显示时动态刷新） */
-    menu_item = gtk_menu_item_new_with_label("收藏夹");
+    menu_item = gtk_menu_item_new_with_label(_("Favorites"));
     menu = gtk_menu_new();
     g_signal_connect(menu, "show", G_CALLBACK(lr_favorites_fill_menu), mw);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
     gtk_menu_shell_append(GTK_MENU_SHELL(menubar), menu_item);
 
     /* 帮助 */
-    menu_item = gtk_menu_item_new_with_label("帮助");
+    menu_item = gtk_menu_item_new_with_label(_("Help"));
     menu = gtk_menu_new();
-    item = gtk_menu_item_new_with_label("关于注册表编辑器");
+    item = gtk_menu_item_new_with_label(_("About Regedit"));
     g_signal_connect(item, "activate", G_CALLBACK(on_about), mw->window);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), menu);
@@ -592,7 +944,9 @@ build_location_bar(LrMainWindow *mw)
     mw->location_bar = bar;
     mw->location_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(mw->location_entry),
-                                   "输入路径后回车跳转");
+                                   _("Type a Path and Press Enter"));
+    atk_object_set_name(gtk_widget_get_accessible(mw->location_entry),
+                        _("Address bar input"));
     add_location_css(mw->location_entry);
     gtk_box_pack_start(GTK_BOX(bar), mw->location_entry, TRUE, TRUE, 0);
 
@@ -643,9 +997,27 @@ on_reveal_path_idle(gpointer user_data)
 {
     LrMainWindow *self = user_data;
 
+    self->reveal_idle = 0;
     if (self->pending_path != NULL)
         lr_tree_pane_reveal_path(self->tree, self->pending_path);
     g_clear_pointer(&self->pending_path, g_free);
+    return G_SOURCE_REMOVE;
+}
+
+/* 命令行文件在根目录外时：窗口首帧树默认选中 Computer 的事件会在
+ * open_file 返回后才处理并清空面板；等事件风暴过后重新打开一次 */
+static gboolean
+on_reopen_idle(gpointer user_data)
+{
+    LrMainWindow *self = user_data;
+
+    self->reopen_idle = 0;
+    if (self->reopen_path != NULL)
+    {
+        gchar *path = g_steal_pointer(&self->reopen_path);
+        open_path(self, path, FALSE);
+        g_free(path);
+    }
     return G_SOURCE_REMOVE;
 }
 
@@ -688,7 +1060,7 @@ void lr_main_window_restore_state(LrMainWindow *self)
     {
         g_free(self->pending_path);
         self->pending_path = last_path;
-        g_idle_add(on_reveal_path_idle, self);
+        self->reveal_idle = g_idle_add(on_reveal_path_idle, self);
     }
 }
 
@@ -703,7 +1075,7 @@ lr_main_window_new(void)
     lr_window_state_set_size(mw->win_state, 920, 600);
 
     mw->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(mw->window), "注册表编辑器");
+    gtk_window_set_title(GTK_WINDOW(mw->window), _("Regedit"));
     gtk_window_set_default_size(GTK_WINDOW(mw->window), 920, 600);
     gtk_window_set_position(GTK_WINDOW(mw->window), GTK_WIN_POS_CENTER);
     g_signal_connect(mw->window, "destroy",
@@ -712,6 +1084,8 @@ lr_main_window_new(void)
                      G_CALLBACK(on_configure_event), mw);
     g_signal_connect(mw->window, "window-state-event",
                      G_CALLBACK(on_window_state_event), mw);
+    g_signal_connect(mw->window, "key-press-event",
+                     G_CALLBACK(on_window_key_press), mw);
 
     vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
@@ -731,9 +1105,19 @@ lr_main_window_new(void)
     gtk_box_pack_start(GTK_BOX(vbox), location_bar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), paned, TRUE, TRUE, 0);
 
+    mw->dirty_bar = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(mw->dirty_bar), 0.0f);
+    gtk_label_set_selectable(GTK_LABEL(mw->dirty_bar), TRUE);
+    atk_object_set_name(gtk_widget_get_accessible(mw->dirty_bar),
+                        _("Edit status"));
+    gtk_widget_set_no_show_all(mw->dirty_bar, TRUE);
+    gtk_widget_set_visible(mw->dirty_bar, FALSE);
+    gtk_box_pack_start(GTK_BOX(vbox), mw->dirty_bar, FALSE, FALSE, 2);
+
     gtk_container_add(GTK_CONTAINER(mw->window), vbox);
 
     lr_tree_pane_set_select_cb(mw->tree, on_tree_select, mw);
+    lr_value_pane_set_dirty_cb(mw->value, on_value_dirty_changed, mw);
 
     /* 窗口显示（show_all）后主循环首个 idle 即把焦点给树视图 */
     g_idle_add(on_focus_tree_idle, mw);
@@ -751,6 +1135,11 @@ void lr_main_window_free(LrMainWindow *self)
 {
     if (self == NULL)
         return;
+    if (self->reveal_idle != 0)
+        g_source_remove(self->reveal_idle);
+    if (self->reopen_idle != 0)
+        g_source_remove(self->reopen_idle);
+    g_clear_pointer(&self->reopen_path, g_free);
     g_free(self->current_path);
     g_clear_pointer(&self->pending_path, g_free);
     lr_window_state_free(self->win_state);

@@ -79,10 +79,35 @@ lr_value_type_name(LrValueType type)
         return "Number";
     case LR_VALUE_BOOL:
         return "Boolean";
+    case LR_VALUE_SECTION:
+        return "Section";
     case LR_VALUE_STRING:
     default:
         return "String";
     }
+}
+
+LrValueType
+lr_value_type_from_name(const char *name)
+{
+    if (name == NULL)
+        return LR_VALUE_STRING;
+    if (strcmp(name, "Number") == 0)
+        return LR_VALUE_NUMBER;
+    if (strcmp(name, "Boolean") == 0)
+        return LR_VALUE_BOOL;
+    if (strcmp(name, "Section") == 0)
+        return LR_VALUE_SECTION;
+    return LR_VALUE_STRING;
+}
+
+const char *const *
+lr_value_type_names(void)
+{
+    static const char *const names[] = {
+        "Section", "String", "Boolean", "Number", NULL,
+    };
+    return names;
 }
 
 LrConfigItem *
@@ -97,6 +122,7 @@ lr_config_item_new(const char *key, const char *data,
     item->section = g_strdup(section);
     item->comment = g_strdup(comment);
     item->enabled = TRUE;
+    item->source_line = G_MAXUINT;
     return item;
 }
 

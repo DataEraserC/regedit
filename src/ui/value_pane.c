@@ -1,7 +1,12 @@
 #include "ui/value_pane.h"
 #include "core/format.h"
+#include "core/text_file.h"
+#include "core/limits.h"
+#include "core/edits.h"
+#include "core/write.h"
 
 #include <string.h>
+#include <glib/gi18n.h>
 #include <json-glib/json-glib.h>
 
 /* 底部 man 说明面板的固定高度（像素） */
@@ -14,6 +19,7 @@ enum
     COL_TYPE,
     COL_DATA,
     COL_COMMENT,
+    COL_SOURCE, /* 0 起原文行号（G_TYPE_UINT）；新增行为 G_MAXUINT */
     N_COLS
 };
 
@@ -44,6 +50,23 @@ struct _LrValuePane
     char *current_basename; /* 当前配置文件 basename（用于 man 5 查询） */
     char *current_name;     /* 当前选中配置项名（用于过滤段落） */
     GHashTable *man_pages;  /* basename → ManPage*（整页文本 + 是否有页） */
+
+    /* 表格内查找状态 */
+    GPtrArray *search_rows; /* 表行快照（GtkTreeIter*，加载后扁平化） */
+    gchar *search_needle;   /* 上次查找词 */
+    guint search_index;     /* 上次命中的行下标 */
+    guint search_total;     /* 最近一次 first 扫描的总命中数 */
+    gboolean search_valid;  /* 是否存在可继续的查找 */
+
+    GtkTreePath *popup_path; /* 右键菜单作用行 */
+
+    gboolean dirty;         /* 表格存在仅内存的编辑 */
+    LrValuePaneDirtyCb dirty_cb;
+    gpointer dirty_data;
+
+    gchar *current_path;    /* 当前加载文件路径 */
+    gchar *source_content;  /* 打开时的原文快照（写回冲突检测用） */
+    gboolean saveable;      /* 当前格式支持行级写回 */
 };
 
 /* 一个配置文件的 man 页缓存（整页文本 + 是否存在该页） */
@@ -128,7 +151,7 @@ on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
             g_hash_table_insert(self->man_pages, g_strdup(req->basename), mp);
         }
         if (is_current)
-            gtk_text_buffer_set_text(buf, "man 查询失败。", -1);
+            gtk_text_buffer_set_text(buf, _("man query failed."), -1);
     }
     else if (out != NULL && g_bytes_get_size(out) > 0)
     {
@@ -153,7 +176,7 @@ on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
             }
             else
             {
-                gchar *msg = g_strdup_printf("未找到「%s」的说明。", req->name);
+                gchar *msg = g_strdup_printf(_("No manual entry found for %s!"), req->name);
                 gtk_text_buffer_set_text(buf, msg, -1);
                 g_free(msg);
             }
@@ -169,7 +192,7 @@ on_man_done(GObject *source, GAsyncResult *res, gpointer user_data)
             g_hash_table_insert(self->man_pages, g_strdup(req->basename), mp);
         }
         if (is_current)
-            gtk_text_buffer_set_text(buf, "未找到该名称的 man 手册页。", -1);
+            gtk_text_buffer_set_text(buf, _("No manual entry for that name."), -1);
     }
 
     g_free(req->basename);
@@ -190,7 +213,7 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
     ManRequest *req;
     ManPage *mp;
     GtkTextBuffer *buf = gtk_text_view_get_buffer(self->info_text);
-    gchar *title = g_strdup_printf("说明：%s（man 5 %s）", name,
+    gchar *title = g_strdup_printf(_("Explain: %s (man 5 %s)"), name,
                                    self->current_basename != NULL
                                        ? self->current_basename
                                        : "");
@@ -203,7 +226,7 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
 
     if (self->current_basename == NULL)
     {
-        gtk_text_buffer_set_text(buf, "无法确定配置文件名。", -1);
+        gtk_text_buffer_set_text(buf, _("Could not resolve the configuration filename."), -1);
         return;
     }
 
@@ -221,19 +244,20 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
             }
             else
             {
-                gchar *msg = g_strdup_printf("未找到「%s」的说明。", name);
-                gtk_text_buffer_set_text(buf, msg, -1);
-                g_free(msg);
+              gchar *msg =
+                  g_strdup_printf(_("No manual entry found for %s!"), name);
+              gtk_text_buffer_set_text(buf, msg, -1);
+              g_free(msg);
             }
         }
         else
         {
-            gtk_text_buffer_set_text(buf, "未找到该名称的 man 手册页。", -1);
+          gtk_text_buffer_set_text(buf, _("No manual entry for that name."), -1);
         }
         return;
     }
 
-    gtk_text_buffer_set_text(buf, "正在查询 man ...", -1);
+    gtk_text_buffer_set_text(buf, _("Fetching man page..."), -1);
 
     /* 排版交给 GTK（GtkTextView 自动折行）：
      *  - MANWIDTH 设很大 → groff 不按终端宽度折行，只保留内容本身的换行
@@ -253,7 +277,7 @@ lr_value_pane_show_man(LrValuePane *self, const char *name)
 
     if (proc == NULL)
     {
-        gtk_text_buffer_set_text(buf, "无法启动 man 查询。", -1);
+        gtk_text_buffer_set_text(buf, _("Unable to start manual page query."), -1);
         g_clear_error(&error);
         return;
     }
@@ -339,7 +363,7 @@ show_text_content(LrValuePane *self, const char *content, gsize length)
 
     gtk_text_buffer_set_text(buf, "", -1);
     if (content == NULL)
-        gtk_text_buffer_set_text(buf, "无法读取文件。", -1);
+        gtk_text_buffer_set_text(buf, _("Unable to read file."), -1);
     else
         gtk_text_buffer_set_text(buf, content, (gint)MIN(length, G_MAXINT));
 
@@ -489,6 +513,176 @@ lr_value_pane_load_json(LrValuePane *self, const char *content, gsize length)
     g_object_unref(parser);
 }
 
+/* ---------- 表格内查找（Edit → Find… / F3） ---------- */
+
+static void
+search_reset(LrValuePane *self)
+{
+    if (self->search_rows != NULL)
+        g_ptr_array_unref(self->search_rows);
+    self->search_rows = NULL;
+    g_free(self->search_needle);
+    self->search_needle = NULL;
+    self->search_index = 0;
+    self->search_total = 0;
+    self->search_valid = FALSE;
+}
+
+/* 递归收集子树全部行（含节/容器行），快照为 GtkTreeIter 数组 */
+static void
+collect_rows_recursive(GtkTreeModel *model, GtkTreeIter *parent,
+                       GPtrArray *out)
+{
+    GtkTreeIter iter;
+    gboolean valid = (parent == NULL)
+                         ? gtk_tree_model_get_iter_first(model, &iter)
+                         : gtk_tree_model_iter_children(model, &iter, parent);
+
+    while (valid)
+    {
+        g_ptr_array_add(out, g_memdup2(&iter, sizeof(GtkTreeIter)));
+        collect_rows_recursive(model, &iter, out);
+        valid = gtk_tree_model_iter_next(model, &iter);
+    }
+}
+
+/* 折叠后是否包含查找词（大小写不敏感，UTF-8 安全） */
+static gboolean
+text_contains(const gchar *text, const gchar *folded_needle)
+{
+    gchar *folded;
+    gboolean ok;
+
+    if (text == NULL || *text == '\0')
+        return FALSE;
+    folded = g_utf8_casefold(text, -1);
+    ok = strstr(folded, folded_needle) != NULL;
+    g_free(folded);
+    return ok;
+}
+
+static gboolean
+row_matches(LrValuePane *self, GtkTreeIter *iter, const gchar *folded)
+{
+    gchar *name = NULL, *data = NULL, *comment = NULL;
+    gboolean ok;
+
+    gtk_tree_model_get(GTK_TREE_MODEL(self->store), iter,
+                       COL_NAME, &name, COL_DATA, &data,
+                       COL_COMMENT, &comment, -1);
+    ok = text_contains(name, folded) || text_contains(data, folded) ||
+         text_contains(comment, folded);
+    g_free(name);
+    g_free(data);
+    g_free(comment);
+    return ok;
+}
+
+/* 选中并滚动到指定行 */
+static void
+select_row(LrValuePane *self, GtkTreeIter *iter)
+{
+    GtkTreePath *path = gtk_tree_model_get_path(GTK_TREE_MODEL(self->store),
+                                                iter);
+    gtk_tree_view_set_cursor(self->view, path, NULL, FALSE);
+    gtk_tree_view_scroll_to_cell(self->view, path, NULL, FALSE, 0.0, 0.0);
+    gtk_tree_path_free(path);
+}
+
+gboolean
+lr_value_pane_search_first(LrValuePane *self, const char *needle,
+                           guint *matches)
+{
+    gchar *folded;
+    guint i, total = 0;
+    gboolean found = FALSE;
+
+    if (self == NULL || needle == NULL || *needle == '\0')
+        return FALSE;
+
+    search_reset(self);
+    self->search_rows =
+        g_ptr_array_new_with_free_func((GDestroyNotify)g_free);
+    collect_rows_recursive(GTK_TREE_MODEL(self->store), NULL,
+                           self->search_rows);
+
+    folded = g_utf8_casefold(needle, -1);
+    for (i = 0; i < self->search_rows->len; i++)
+    {
+        GtkTreeIter *it = g_ptr_array_index(self->search_rows, i);
+        if (!row_matches(self, it, folded))
+            continue;
+        total++;
+        if (!found)
+        {
+            select_row(self, it);
+            self->search_index = i;
+            found = TRUE;
+        }
+    }
+    g_free(folded);
+
+    self->search_total = total;
+    self->search_valid = TRUE;
+    self->search_needle = g_strdup(needle);
+    if (matches != NULL)
+        *matches = total;
+    return found;
+}
+
+gboolean
+lr_value_pane_search_next(LrValuePane *self)
+{
+    gchar *folded;
+    guint len, k, idx;
+
+    if (self == NULL || !self->search_valid ||
+        self->search_rows == NULL || self->search_rows->len == 0)
+        return FALSE;
+
+    len = self->search_rows->len;
+    folded = g_utf8_casefold(self->search_needle, -1);
+    for (k = 1; k <= len; k++)
+    {
+        idx = (self->search_index + k) % len;
+        GtkTreeIter *it = g_ptr_array_index(self->search_rows, idx);
+        if (row_matches(self, it, folded))
+        {
+            g_free(folded);
+            select_row(self, it);
+            self->search_index = idx;
+            return TRUE;
+        }
+    }
+    g_free(folded);
+    return FALSE;
+}
+
+gboolean
+lr_value_pane_search_has_query(LrValuePane *self)
+{
+    return self != NULL && self->search_valid &&
+           self->search_needle != NULL && *self->search_needle != '\0';
+}
+
+static void
+value_pane_set_dirty(LrValuePane *self, gboolean dirty)
+{
+    if (self->dirty == dirty)
+        return;
+    self->dirty = dirty;
+    if (self->dirty_cb != NULL)
+        self->dirty_cb(dirty, self->dirty_data);
+}
+
+void
+lr_value_pane_set_dirty_cb(LrValuePane *self, LrValuePaneDirtyCb cb,
+                           gpointer user_data)
+{
+    self->dirty_cb = cb;
+    self->dirty_data = user_data;
+}
+
 void lr_value_pane_load_file(LrValuePane *self, const char *path)
 {
     gchar *content = NULL;
@@ -496,22 +690,55 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
     GError *error = NULL;
     LrConfigFormat fmt;
 
+    g_clear_pointer(&self->current_path, g_free);
+    g_clear_pointer(&self->source_content, g_free);
+    self->saveable = FALSE;
+    value_pane_set_dirty(self, FALSE);
+    search_reset(self);
+    g_clear_pointer(&self->popup_path, gtk_tree_path_free);
     g_free(self->current_basename);
     self->current_basename = g_path_get_basename(path);
 
-    /* 一次性读取内容，检测与解析复用，避免重复读文件 */
-    if (!g_file_get_contents(path, &content, &len, &error))
+    /* 统一读取守卫：大小上限 + 非文本(NUL)过滤，树与直接打开同一套规则 */
     {
-        gchar *msg = g_strdup_printf("无法读取文件：%s",
-                                     error != NULL ? error->message
-                                                   : "未知错误");
-        show_text_content(self, msg, strlen(msg));
-        g_free(msg);
-        g_clear_error(&error);
-        return;
+        LrTextReadStatus rst = lr_text_file_read(path, &content, &len,
+                                                 &error);
+        gchar *msg = NULL;
+
+        if (rst == LR_TEXT_ERROR)
+        {
+            msg = g_strdup_printf(_("Unable to read file: %s"),
+                                  error != NULL ? error->message
+                                                : _("Unknown Error"));
+        }
+        else if (rst == LR_TEXT_TOO_LARGE)
+        {
+            msg = g_strdup_printf(
+                _("File is too large (limit %u KiB)."),
+                LR_MAX_FILE_SIZE / 1024);
+        }
+        else if (rst == LR_TEXT_BINARY)
+        {
+            msg = g_strdup(_("File appears to be binary."));
+        }
+
+        if (msg != NULL)
+        {
+            show_text_content(self, msg, strlen(msg));
+            g_free(msg);
+            g_clear_error(&error);
+            return;
+        }
     }
 
     fmt = lr_format_detect_content(path, content, len);
+    g_clear_pointer(&self->current_path, g_free);
+    g_clear_pointer(&self->source_content, g_free);
+    self->current_path = g_strdup(path);
+    self->source_content = g_strdup(content);
+    self->saveable = (fmt == LR_FORMAT_INI || fmt == LR_FORMAT_KV ||
+                      fmt == LR_FORMAT_SYSTEMD || fmt == LR_FORMAT_TOML ||
+                      fmt == LR_FORMAT_KEYWORD || fmt == LR_FORMAT_APT);
     if (!lr_format_supported(fmt))
     {
         show_text_content(self, content, len);
@@ -587,6 +814,7 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
                                                COL_TYPE, "Section",
                                                COL_DATA, "",
                                                COL_COMMENT, "",
+                                               COL_SOURCE, G_MAXUINT,
                                                -1);
                             node = g_memdup2(&sit, sizeof(GtkTreeIter));
                             g_hash_table_insert(nodes, g_strdup(cur->str),
@@ -607,6 +835,7 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
                                    COL_TYPE, lr_value_type_name(item->type),
                                    COL_DATA, item->data,
                                    COL_COMMENT, item->comment != NULL ? item->comment : "",
+                                   COL_SOURCE, item->source_line,
                                    -1);
             }
 
@@ -621,8 +850,140 @@ void lr_value_pane_load_file(LrValuePane *self, const char *path)
     }
 }
 
+gboolean
+lr_value_pane_save_changes(LrValuePane *self, GError **error)
+{
+    GPtrArray *iters;
+    LrRowState *rows;
+    LrEdit *edits = NULL;
+    gsize n_edits = 0, real = 0, i;
+    gboolean ok = FALSE;
+
+    if (self == NULL)
+        return FALSE;
+    if (!self->dirty)
+        return TRUE;
+    if (!self->saveable)
+    {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            _("write-back is not supported for this format yet"));
+        return FALSE;
+    }
+    if (self->current_path == NULL || self->source_content == NULL)
+    {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            _("no file loaded to save"));
+        return FALSE;
+    }
+
+    iters = g_ptr_array_new_with_free_func((GDestroyNotify)g_free);
+    collect_rows_recursive(GTK_TREE_MODEL(self->store), NULL, iters);
+    rows = g_new0(LrRowState, iters->len);
+
+    for (i = 0; i < iters->len; i++)
+    {
+        GtkTreeIter *it = g_ptr_array_index(iters, i);
+        gchar *name = NULL, *data = NULL, *enabled = NULL;
+        gchar *comment = NULL, *type = NULL;
+        guint source_line;
+
+        gtk_tree_model_get(GTK_TREE_MODEL(self->store), it,
+                           COL_NAME, &name, COL_DATA, &data,
+                           COL_ENABLED, &enabled, COL_COMMENT, &comment,
+                           COL_TYPE, &type, COL_SOURCE, &source_line, -1);
+        if (g_strcmp0(type, "Section") != 0)
+        {
+            rows[real].line = source_line;
+            rows[real].key = name;
+            rows[real].data = data;
+            rows[real].enabled = enabled;
+            rows[real].comment = comment;
+            rows[real].type = type;
+            real++;
+        }
+        else
+        {
+            g_free(name);
+            g_free(data);
+            g_free(enabled);
+            g_free(comment);
+            g_free(type);
+        }
+    }
+    g_ptr_array_unref(iters);
+
+    ok = lr_build_edits_from_rows(self->current_path, self->source_content,
+                                  rows, real, &edits, &n_edits, error);
+
+    if (!ok)
+    {
+        for (i = 0; i < real; i++)
+        {
+            g_free((gchar *)rows[i].key);
+            g_free((gchar *)rows[i].data);
+            g_free((gchar *)rows[i].enabled);
+            g_free((gchar *)rows[i].comment);
+            g_free((gchar *)rows[i].type);
+        }
+        g_free(rows);
+        return FALSE;
+    }
+
+    if (n_edits == 0)
+    {
+        for (i = 0; i < real; i++)
+        {
+            g_free((gchar *)rows[i].key);
+            g_free((gchar *)rows[i].data);
+            g_free((gchar *)rows[i].enabled);
+            g_free((gchar *)rows[i].comment);
+            g_free((gchar *)rows[i].type);
+        }
+        g_free(rows);
+        g_free(edits);
+        return TRUE;
+    }
+    ok = lr_save_config_file(self->current_path, self->source_content,
+                             edits, n_edits, error);
+    g_free(edits);
+    if (ok)
+    {
+        /* load_file 会先清空 self->current_path，必须先复制再传参 */
+        gchar *reload_path = g_strdup(self->current_path);
+        lr_value_pane_load_file(self, reload_path);
+        g_free(reload_path);
+    }
+    for (i = 0; i < real; i++)
+    {
+        g_free((gchar *)rows[i].key);
+        g_free((gchar *)rows[i].data);
+        g_free((gchar *)rows[i].enabled);
+        g_free((gchar *)rows[i].comment);
+        g_free((gchar *)rows[i].type);
+    }
+    g_free(rows);
+    return ok;
+}
+
+gboolean
+lr_value_pane_can_save(LrValuePane *self)
+{
+    return self != NULL && self->saveable;
+}
+
+gboolean
+lr_value_pane_is_dirty(LrValuePane *self)
+{
+    return self != NULL && self->dirty;
+}
+
 void lr_value_pane_clear(LrValuePane *self)
 {
+    g_clear_pointer(&self->current_path, g_free);
+    g_clear_pointer(&self->source_content, g_free);
+    self->saveable = FALSE;
+    value_pane_set_dirty(self, FALSE);
+    search_reset(self);
     gtk_tree_store_clear(self->store);
     gtk_tree_store_clear(self->json_store);
     gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "empty");
@@ -737,12 +1098,12 @@ on_data_editing_started(GtkCellRenderer *renderer, GtkCellEditable *editable,
     if (type == NULL)
         return;
 
-    if (g_strcmp0(type, "Number") == 0)
+    if (lr_value_type_from_name(type) == LR_VALUE_NUMBER)
     {
         g_signal_connect(editable, "insert-text",
                          G_CALLBACK(on_number_insert_text), NULL);
     }
-    else if (g_strcmp0(type, "Boolean") == 0)
+    else if (lr_value_type_from_name(type) == LR_VALUE_BOOL)
     {
         static const gchar *vals[] = {"true", "false", "yes", "no", "0",
                                       "1"};
@@ -783,12 +1144,13 @@ on_data_edited(GtkCellRendererText *renderer, const gchar *path,
     gtk_tree_model_get(GTK_TREE_MODEL(self->store), &iter, COL_TYPE, &type, -1);
     if (type != NULL)
     {
-        if (g_strcmp0(type, "Number") == 0 && !is_number_text(new_text))
+        LrValueType tt = lr_value_type_from_name(type);
+        if (tt == LR_VALUE_NUMBER && !is_number_text(new_text))
         {
             g_free(type);
             return; /* 非法数字：拒绝修改 */
         }
-        if (g_strcmp0(type, "Boolean") == 0 && !is_valid_bool_text(new_text))
+        if (tt == LR_VALUE_BOOL && !is_valid_bool_text(new_text))
         {
             g_free(type);
             return;
@@ -796,6 +1158,7 @@ on_data_edited(GtkCellRendererText *renderer, const gchar *path,
         g_free(type);
     }
     gtk_tree_store_set(self->store, &iter, COL_DATA, new_text, -1);
+    value_pane_set_dirty(self, TRUE);
 }
 
 /* 启用列（下拉 true/false）编辑完成 */
@@ -816,6 +1179,7 @@ on_enabled_edited(GtkCellRendererText *renderer, const gchar *path,
     }
     gtk_tree_path_free(tp);
     gtk_tree_store_set(self->store, &iter, COL_ENABLED, new_text, -1);
+    value_pane_set_dirty(self, TRUE);
 }
 
 /* 在表格末尾追加一个配置项（仅内存，不写盘） */
@@ -824,17 +1188,17 @@ void lr_value_pane_add_value(LrValuePane *self, const char *type)
     const gchar *def_name, *def_data;
     GtkTreeIter iter;
 
-    if (g_strcmp0(type, "Section") == 0)
+    if (lr_value_type_from_name(type) == LR_VALUE_SECTION)
     {
         def_name = "NewSection";
         def_data = "";
     }
-    else if (g_strcmp0(type, "Boolean") == 0)
+    else if (lr_value_type_from_name(type) == LR_VALUE_BOOL)
     {
         def_name = "NewBoolean";
         def_data = "false";
     }
-    else if (g_strcmp0(type, "Number") == 0)
+    else if (lr_value_type_from_name(type) == LR_VALUE_NUMBER)
     {
         def_name = "NewNumber";
         def_data = "0";
@@ -848,7 +1212,8 @@ void lr_value_pane_add_value(LrValuePane *self, const char *type)
     gtk_tree_store_append(self->store, &iter, NULL);
     gtk_tree_store_set(self->store, &iter, COL_ENABLED, "true", COL_NAME,
                        def_name, COL_TYPE, type, COL_DATA, def_data,
-                       COL_COMMENT, "", -1);
+                       COL_COMMENT, "", COL_SOURCE, G_MAXUINT, -1);
+    value_pane_set_dirty(self, TRUE);
 }
 
 /* 新建一行（仅内存，不写盘） */
@@ -864,13 +1229,7 @@ on_new_value(GtkMenuItem *item, gpointer user_data)
 static void
 build_new_submenu(LrValuePane *self, GtkWidget *menu)
 {
-    static const gchar *types[] = {
-        "Section",
-        "String",
-        "Boolean",
-        "Number",
-        NULL,
-    };
+    const char *const *types = lr_value_type_names();
     gint i;
 
     for (i = 0; types[i] != NULL; i++)
@@ -897,7 +1256,7 @@ build_enabled_column(LrValuePane *self)
     g_signal_connect(renderer, "edited", G_CALLBACK(on_enabled_edited), self);
 
     col = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(col, "启用");
+    gtk_tree_view_column_set_title(col, _("Enable"));
     gtk_tree_view_column_set_resizable(col, TRUE);
     gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
     gtk_tree_view_column_set_fixed_width(col, 75);
@@ -926,9 +1285,9 @@ on_type_edited(GtkCellRendererText *renderer, const gchar *path,
     gtk_tree_path_free(tp);
 
     /* 类型切换时给数据一个该类型下的合理默认值 */
-    if (g_strcmp0(new_text, "Boolean") == 0)
+    if (lr_value_type_from_name(new_text) == LR_VALUE_BOOL)
         def_data = "false";
-    else if (g_strcmp0(new_text, "Number") == 0)
+    else if (lr_value_type_from_name(new_text) == LR_VALUE_NUMBER)
         def_data = "0";
 
     if (def_data != NULL)
@@ -936,6 +1295,7 @@ on_type_edited(GtkCellRendererText *renderer, const gchar *path,
                            def_data, -1);
     else
         gtk_tree_store_set(self->store, &iter, COL_TYPE, new_text, -1);
+    value_pane_set_dirty(self, TRUE);
 }
 
 /* 类型列：下拉 Section/String/Boolean/Number */
@@ -945,10 +1305,10 @@ build_type_column(LrValuePane *self)
     GtkCellRenderer *renderer = gtk_cell_renderer_combo_new();
     GtkListStore *store = gtk_list_store_new(1, G_TYPE_STRING);
     GtkTreeViewColumn *col;
-    static const gchar *types[] = {"Section", "String", "Boolean", "Number"};
+    const char *const *types = lr_value_type_names();
     gint i;
 
-    for (i = 0; i < 4; i++)
+    for (i = 0; types[i] != NULL; i++)
         gtk_list_store_insert_with_values(store, NULL, i, 0, types[i], -1);
     g_object_set(renderer, "model", store, "text-column", 0, "editable", TRUE,
                  "has-entry", FALSE, NULL);
@@ -956,7 +1316,7 @@ build_type_column(LrValuePane *self)
     g_signal_connect(renderer, "edited", G_CALLBACK(on_type_edited), self);
 
     col = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(col, "类型");
+    gtk_tree_view_column_set_title(col, _("Type"));
     gtk_tree_view_column_set_resizable(col, TRUE);
     gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
     gtk_tree_view_column_set_fixed_width(col, 93);
@@ -979,7 +1339,7 @@ build_data_column(LrValuePane *self)
                      G_CALLBACK(on_data_editing_started), self);
 
     col = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(col, "数据");
+    gtk_tree_view_column_set_title(col, _("Data"));
     gtk_tree_view_column_set_resizable(col, TRUE);
     gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
     /* 初始宽度较小，实际宽度由 expand 分配：数据列占满剩余空间 */
@@ -1005,6 +1365,7 @@ on_text_edited(GtkCellRendererText *renderer, const gchar *path,
     if (gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store), &iter, tp))
         gtk_tree_store_set(self->store, &iter, col, new_text, -1);
     gtk_tree_path_free(tp);
+    value_pane_set_dirty(self, TRUE);
 }
 
 /* 可编辑文本列：title 表头，col 模型列，gray 是否灰色前景，width 固定列宽 */
@@ -1034,17 +1395,138 @@ build_editable_text_column(LrValuePane *self, const char *title, gint col,
     g_object_set_data(G_OBJECT(renderer), "lr-col", GINT_TO_POINTER(col));
 }
 
-/* 右键弹出值面板菜单：新建 → 类型子菜单 */
+/* 右键菜单动作：把作用行强制显示为指定类型（不改动数据） */
+static void
+on_popup_force_type(GtkMenuItem *item, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GtkTreeIter iter;
+    const gchar *new_type;
+
+    if (self->popup_path == NULL)
+        return;
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store),
+                                 &iter, self->popup_path))
+        return;
+
+    new_type = gtk_menu_item_get_label(item);
+    if (lr_value_type_from_name(new_type) == LR_VALUE_SECTION)
+        return;
+    gtk_tree_store_set(self->store, &iter, COL_TYPE, new_type, -1);
+    value_pane_set_dirty(self, TRUE);
+}
+
+/* 右键菜单动作：根据数据自动重新识别类型 */
+static void
+on_popup_detect_type(GtkMenuItem *item, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GtkTreeIter iter;
+    gchar *data = NULL;
+
+    (void)item;
+    if (self->popup_path == NULL)
+        return;
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store),
+                                 &iter, self->popup_path))
+        return;
+
+    gtk_tree_model_get(GTK_TREE_MODEL(self->store), &iter,
+                       COL_DATA, &data, -1);
+    if (data != NULL)
+    {
+        gtk_tree_store_set(self->store, &iter, COL_TYPE,
+                           lr_value_type_name(lr_value_detect_type(data)),
+                           -1);
+        value_pane_set_dirty(self, TRUE);
+        g_free(data);
+    }
+}
+
+/* 右键菜单动作：软删除 = 把启用列置为 false，保存时写回为注释行 */
+static void
+on_popup_comment_out(GtkMenuItem *item, gpointer user_data)
+{
+    LrValuePane *self = user_data;
+    GtkTreeIter iter;
+    gchar *type = NULL;
+
+    (void)item;
+    if (self->popup_path == NULL)
+        return;
+    if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store),
+                                 &iter, self->popup_path))
+        return;
+    gtk_tree_model_get(GTK_TREE_MODEL(self->store), &iter,
+                       COL_TYPE, &type, -1);
+    if (g_strcmp0(type, "Section") == 0)
+    {
+        g_free(type);
+        return;
+    }
+    g_free(type);
+    gtk_tree_store_set(self->store, &iter, COL_ENABLED, "false", -1);
+    value_pane_set_dirty(self, TRUE);
+}
+
+/* 类型子菜单：String / Boolean / Number + 自动识别 */
+static void
+build_type_submenu(LrValuePane *self, GtkWidget *menu)
+{
+    const char *const *names = lr_value_type_names();
+    GtkWidget *item;
+    gint i;
+
+    (void)self;
+    for (i = 0; names[i] != NULL; i++)
+    {
+        if (strcmp(names[i], "Section") == 0)
+            continue;
+        item = gtk_menu_item_new_with_label(names[i]);
+        g_signal_connect(item, "activate", G_CALLBACK(on_popup_force_type),
+                         self);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    }
+
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label(_("Detect automatically"));
+    g_signal_connect(item, "activate", G_CALLBACK(on_popup_detect_type),
+                     self);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+}
+
+/* 右键弹出值面板菜单：新建 / 类型（强制显示） */
 static void
 show_value_popup_menu(LrValuePane *self, GdkEventButton *event)
 {
     GtkWidget *menu = gtk_menu_new();
-    GtkWidget *new_item = gtk_menu_item_new_with_label("新建");
+    GtkWidget *new_item = gtk_menu_item_new_with_label(_("New"));
     GtkWidget *new_sub = gtk_menu_new();
+    GtkWidget *sep;
+    GtkWidget *type_item = gtk_menu_item_new_with_label(_("Type"));
+    GtkWidget *type_sub = gtk_menu_new();
+    GtkWidget *item;
 
     build_new_submenu(self, new_sub);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(new_item), new_sub);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), new_item);
+
+    sep = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), sep);
+
+    build_type_submenu(self, type_sub);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(type_item), type_sub);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), type_item);
+
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+    item = gtk_menu_item_new_with_label(_("Comment Out (soft delete)"));
+    g_signal_connect(item, "activate", G_CALLBACK(on_popup_comment_out),
+                     self);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
@@ -1060,6 +1542,23 @@ on_value_button_press(GtkWidget *widget, GdkEventButton *event,
 
     if (event->type == GDK_BUTTON_PRESS && event->button == 3)
     {
+        GtkTreePath *path = NULL;
+
+        if (gtk_tree_view_get_path_at_pos(self->view, (gint)event->x,
+                                          (gint)event->y, &path,
+                                          NULL, NULL, NULL))
+        {
+            GtkTreeIter iter;
+            if (gtk_tree_model_get_iter(GTK_TREE_MODEL(self->store),
+                                        &iter, path))
+            {
+                gtk_tree_selection_select_iter(
+                    gtk_tree_view_get_selection(self->view), &iter);
+            }
+            g_clear_pointer(&self->popup_path, gtk_tree_path_free);
+            self->popup_path = gtk_tree_path_copy(path);
+            gtk_tree_path_free(path);
+        }
         show_value_popup_menu(self, event);
         return TRUE;
     }
@@ -1077,6 +1576,8 @@ lr_value_pane_new(void)
                                             man_page_free);
 
     self->widget = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+    atk_object_set_name(gtk_widget_get_accessible(self->widget),
+                        _("Value panel"));
 
     self->stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(self->stack),
@@ -1092,10 +1593,12 @@ lr_value_pane_new(void)
 
     self->store = gtk_tree_store_new(N_COLS, G_TYPE_STRING, G_TYPE_STRING,
                                      G_TYPE_STRING, G_TYPE_STRING,
-                                     G_TYPE_STRING);
+                                     G_TYPE_STRING, G_TYPE_UINT);
     self->view = GTK_TREE_VIEW(gtk_tree_view_new_with_model(
         GTK_TREE_MODEL(self->store)));
     g_object_unref(self->store);
+    atk_object_set_name(gtk_widget_get_accessible(GTK_WIDGET(self->view)),
+                        _("Value table"));
 
     gtk_tree_view_set_grid_lines(self->view, GTK_TREE_VIEW_GRID_LINES_VERTICAL);
     g_signal_connect(gtk_tree_view_get_selection(self->view), "changed",
@@ -1104,10 +1607,10 @@ lr_value_pane_new(void)
                      G_CALLBACK(on_value_button_press), self);
 
     build_enabled_column(self);
-    build_editable_text_column(self, "名称", COL_NAME, FALSE, 213);
+    build_editable_text_column(self, _("Name"), COL_NAME, FALSE, 213);
     build_type_column(self);
     build_data_column(self);
-    build_editable_text_column(self, "备注", COL_COMMENT, TRUE, 360);
+    build_editable_text_column(self, _("Note"), COL_COMMENT, TRUE, 360);
 
     scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
@@ -1146,10 +1649,12 @@ lr_value_pane_new(void)
     self->json_view = GTK_TREE_VIEW(gtk_tree_view_new_with_model(
         GTK_TREE_MODEL(self->json_store)));
     g_object_unref(self->json_store);
+    atk_object_set_name(gtk_widget_get_accessible(GTK_WIDGET(self->json_view)),
+                        _("JSON tree"));
 
-    append_text_column(self->json_view, "名称", COL_J_NAME, TRUE, FALSE, 0);
-    append_text_column(self->json_view, "类型", COL_J_TYPE, FALSE, FALSE, 0);
-    append_text_column(self->json_view, "数据", COL_J_DATA, TRUE, FALSE, 0);
+    append_text_column(self->json_view, _("Name"), COL_J_NAME, TRUE, FALSE, 0);
+    append_text_column(self->json_view, _("Type"), COL_J_TYPE, FALSE, FALSE, 0);
+    append_text_column(self->json_view, _("Data"), COL_J_DATA, TRUE, FALSE, 0);
 
     scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
@@ -1167,7 +1672,7 @@ lr_value_pane_new(void)
 
         self->info_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
-        self->info_title = GTK_LABEL(gtk_label_new("说明"));
+        self->info_title = GTK_LABEL(gtk_label_new(_("Note")));
         gtk_widget_set_halign(GTK_WIDGET(self->info_title), GTK_ALIGN_START);
         gtk_widget_set_margin_start(GTK_WIDGET(self->info_title), 6);
         gtk_widget_set_margin_top(GTK_WIDGET(self->info_title), 4);
@@ -1208,6 +1713,9 @@ void lr_value_pane_free(LrValuePane *self)
 {
     if (self == NULL)
         return;
+    g_clear_pointer(&self->current_path, g_free);
+    g_clear_pointer(&self->source_content, g_free);
+    search_reset(self);
     g_free(self->current_basename);
     g_free(self->current_name);
     g_hash_table_destroy(self->man_pages);

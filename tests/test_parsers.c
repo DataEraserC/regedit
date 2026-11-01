@@ -2,6 +2,7 @@
 #include "core/format.h"
 
 #include <glib/gstdio.h>
+#include <string.h>
 
 static gchar *
 write_tmp(const gchar *name, const gchar *content)
@@ -33,6 +34,7 @@ void test_parsers(void)
         TEST_ASSERT(it->type == LR_VALUE_NUMBER);
         TEST_ASSERT_STR_EQ(it->data, "22");
         TEST_ASSERT_STR_EQ(it->section, "server");
+        TEST_ASSERT(it->source_line == 2);
         /* 上方注释 + 行内注释合并显示 */
         TEST_ASSERT_STR_EQ(it->comment, "顶部注释\n端口");
 
@@ -48,6 +50,60 @@ void test_parsers(void)
         TEST_ASSERT(it->type == LR_VALUE_STRING);
         TEST_ASSERT_STR_EQ(it->data, "my host");
         TEST_ASSERT_STR_EQ(it->comment, "第二注释");
+        TEST_ASSERT(it->source_line == 5);
+
+        lr_config_file_free(f);
+        g_unlink(p);
+        g_free(p);
+    }
+
+    /* ---------- TOML ---------- */
+    {
+        gchar *p = write_tmp("lr-test-toml.toml",
+                             "title = \"linux-regedit demo\"\n"
+                             "[server]\n"
+                             "host = \"127.0.0.1\"\n"
+                             "port = 8080\n"
+                             "debug = false\n"
+                             "[logging]\n"
+                             "level = \"info\"   # 日志级别\n"
+                             "# 轮转说明\n"
+                             "rotate = true\n");
+        LrConfigFile *f = lr_parse_config(p);
+
+        TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_TOML);
+        TEST_ASSERT(f->parsed);
+        TEST_ASSERT(f->items->len == 6);
+
+        LrConfigItem *it = g_ptr_array_index(f->items, 0);
+        TEST_ASSERT_STR_EQ(it->key, "title");
+        TEST_ASSERT(it->type == LR_VALUE_STRING);
+        TEST_ASSERT_STR_EQ(it->data, "linux-regedit demo");
+        TEST_ASSERT(it->comment == NULL);
+
+        it = g_ptr_array_index(f->items, 1);
+        TEST_ASSERT_STR_EQ(it->key, "host");
+        TEST_ASSERT_STR_EQ(it->section, "server");
+        TEST_ASSERT_STR_EQ(it->data, "127.0.0.1");
+
+        it = g_ptr_array_index(f->items, 2);
+        TEST_ASSERT_STR_EQ(it->key, "port");
+        TEST_ASSERT(it->type == LR_VALUE_NUMBER);
+        TEST_ASSERT_STR_EQ(it->data, "8080");
+
+        it = g_ptr_array_index(f->items, 3);
+        TEST_ASSERT_STR_EQ(it->key, "debug");
+        TEST_ASSERT(it->type == LR_VALUE_BOOL);
+
+        it = g_ptr_array_index(f->items, 4);
+        TEST_ASSERT_STR_EQ(it->key, "level");
+        TEST_ASSERT_STR_EQ(it->section, "logging");
+        TEST_ASSERT_STR_EQ(it->comment, "日志级别");
+
+        it = g_ptr_array_index(f->items, 5);
+        TEST_ASSERT_STR_EQ(it->key, "rotate");
+        TEST_ASSERT(it->type == LR_VALUE_BOOL);
+        TEST_ASSERT_STR_EQ(it->comment, "轮转说明");
 
         lr_config_file_free(f);
         g_unlink(p);
@@ -71,6 +127,7 @@ void test_parsers(void)
         TEST_ASSERT_STR_EQ(it->key, "PATH");
         TEST_ASSERT(it->type == LR_VALUE_STRING);
         TEST_ASSERT_STR_EQ(it->comment, "环境变量");
+        TEST_ASSERT(it->source_line == 1);
 
         /* 同一条注释说明其下方多个配置项 */
         it = g_ptr_array_index(f->items, 1);
@@ -175,6 +232,7 @@ void test_parsers(void)
         TEST_ASSERT_STR_EQ(it->data, "22");
         TEST_ASSERT(it->type == LR_VALUE_NUMBER);
         TEST_ASSERT(!it->enabled);
+        TEST_ASSERT(it->source_line == 1);
         /* 上方最近一条说明文字作为备注 */
         TEST_ASSERT_STR_EQ(it->comment, "注释行");
 
@@ -432,6 +490,22 @@ void test_parsers(void)
             TEST_ASSERT_STR_EQ(it->key, "MetaKey");
             TEST_ASSERT_STR_EQ(it->section,
                                "Acquire::IndexTargets::deb::DEP-11");
+            {
+                gchar *raw = NULL;
+                gsize raw_len = 0;
+                gchar **ls;
+                guint idx;
+
+                g_file_get_contents(p, &raw, &raw_len, NULL);
+                ls = g_strsplit(raw, "\n", -1);
+                for (idx = 0; ls[idx] != NULL; idx++)
+                    if (strstr(ls[idx], "MetaKey") != NULL)
+                        break;
+                TEST_ASSERT(ls[idx] != NULL);
+                TEST_ASSERT(it->source_line == idx);
+                g_strfreev(ls);
+                g_free(raw);
+            }
 
             it = g_ptr_array_index(f->items, 2);
             TEST_ASSERT_STR_EQ(it->key, "KeepCompressed");
@@ -496,6 +570,114 @@ void test_parsers(void)
 
             lr_config_file_free(f);
             g_free(p);
+        }
+
+        /* ---------- 解析边界：CRLF / BOM / 引号内 # / 重复节 ---------- */
+        {
+            gchar *p = write_tmp("lr-edge-1.ini",
+                                 "Port = 22\r\nEnable = yes\r\n");
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_KV);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 2);
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->key, "Port");
+            TEST_ASSERT_STR_EQ(it->data, "22");
+
+            lr_config_file_free(f);
+            g_unlink(p);
+            g_free(p);
+        }
+        {
+            gchar *p = write_tmp("lr-edge-2.ini",
+                                 "\xEF\xBB\xBF[server]\nPort = 22\n");
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_INI);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 1);
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->section, "server");
+            TEST_ASSERT_STR_EQ(it->data, "22");
+
+            lr_config_file_free(f);
+            g_unlink(p);
+            g_free(p);
+        }
+        {
+            gchar *p = write_tmp("lr-edge-3.conf",
+                                 "Name = \"a#b\"   # 行尾注释\n");
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_KV);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 1);
+            LrConfigItem *it = g_ptr_array_index(f->items, 0);
+            TEST_ASSERT_STR_EQ(it->data, "a#b");
+            TEST_ASSERT_STR_EQ(it->comment, "行尾注释");
+
+            lr_config_file_free(f);
+            g_unlink(p);
+            g_free(p);
+        }
+        {
+            gchar *p = write_tmp("lr-edge-4.ini",
+                                 "[s]\na = 1\n[s]\nb = 2\n");
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_INI);
+            TEST_ASSERT(f->parsed);
+            TEST_ASSERT(f->items->len == 2);
+            LrConfigItem *it0 = g_ptr_array_index(f->items, 0);
+            LrConfigItem *it1 = g_ptr_array_index(f->items, 1);
+            TEST_ASSERT_STR_EQ(it0->section, "s");
+            TEST_ASSERT_STR_EQ(it1->section, "s");
+
+            lr_config_file_free(f);
+            g_unlink(p);
+            g_free(p);
+        }
+
+        /* ---------- 空文件 / 仅注释：不得误判为配置 ---------- */
+        {
+            gchar *p = write_tmp("lr-edge-5.conf", "");
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_UNKNOWN);
+            TEST_ASSERT(!f->parsed);
+            TEST_ASSERT(f->items->len == 0);
+
+            lr_config_file_free(f);
+            g_unlink(p);
+            g_free(p);
+        }
+        {
+            gchar *p = write_tmp("lr-edge-6.conf",
+                                 "# 只有注释\n; 另一行\n");
+            LrConfigFile *f = lr_parse_config(p);
+
+            TEST_ASSERT(lr_format_detect(p) == LR_FORMAT_UNKNOWN);
+            TEST_ASSERT(!f->parsed);
+
+            lr_config_file_free(f);
+            g_unlink(p);
+            g_free(p);
+        }
+
+        /* ---------- 后缀优先级：相同内容 .toml / .ini ---------- */
+        {
+            const gchar *body = "[x]\nkey = \"v\"\n";
+            gchar *pa = write_tmp("lr-pri.toml", body);
+            gchar *pb = write_tmp("lr-pri.ini", body);
+
+            TEST_ASSERT(lr_format_detect(pa) == LR_FORMAT_TOML);
+            TEST_ASSERT(lr_format_detect(pb) == LR_FORMAT_INI);
+
+            g_unlink(pa);
+            g_unlink(pb);
+            g_free(pa);
+            g_free(pb);
         }
     }
 }
